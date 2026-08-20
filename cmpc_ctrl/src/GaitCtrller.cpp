@@ -175,6 +175,38 @@ void GaitCtrller::TorqueCalculator(double *imuData, double *motorData, double *e
     {
         printf("[time] est: %.3f ms | mpc+swing: %.3f ms | legctrl: %.3f ms | total: %.3f ms\n",
                t_est_ms, t_mpc_ms, t_leg_ms, t_total_ms);
+
+        // Ab/ad diagnostic in the convention actually sent to MuJoCo.
+        // Leg order here is [FR, FL, HR, HL]. An inward-closing command has
+        // tau_sim signs [-, +, -, +] for this model/order.
+        printf("[abad] order=FR,FL,HR,HL q_sim="
+               "[%+.3f,%+.3f,%+.3f,%+.3f] tau_sim="
+               "[%+.3f,%+.3f,%+.3f,%+.3f]\n",
+               -_legController->datas[0].q(0),
+               -_legController->datas[1].q(0),
+               -_legController->datas[2].q(0),
+               -_legController->datas[3].q(0),
+               -legcommand.tau_abad_ff[0],
+               -legcommand.tau_abad_ff[1],
+               -legcommand.tau_abad_ff[2],
+               -legcommand.tau_abad_ff[3]);
+
+        printf("[abad-src] fy_mpc="
+               "[%+.2f,%+.2f,%+.2f,%+.2f] fz_mpc="
+               "[%+.2f,%+.2f,%+.2f,%+.2f] py_err="
+               "[%+.4f,%+.4f,%+.4f,%+.4f]\n",
+               _legController->commands[0].forceFeedForward(1),
+               _legController->commands[1].forceFeedForward(1),
+               _legController->commands[2].forceFeedForward(1),
+               _legController->commands[3].forceFeedForward(1),
+               _legController->commands[0].forceFeedForward(2),
+               _legController->commands[1].forceFeedForward(2),
+               _legController->commands[2].forceFeedForward(2),
+               _legController->commands[3].forceFeedForward(2),
+               _legController->commands[0].pDes(1) - _legController->datas[0].p(1),
+               _legController->commands[1].pDes(1) - _legController->datas[1].p(1),
+               _legController->commands[2].pDes(1) - _legController->datas[2].p(1),
+               _legController->commands[3].pDes(1) - _legController->datas[3].p(1));
     }
 
     if (_safetyCheck)

@@ -154,7 +154,9 @@ private:
   bool firstSwing[4];  //true
   float swingTimeRemaining[4];
   float stand_traj[6];
-  int current_gait;
+  Vec3<float> standingFootPositions[4];
+  float standingStiffnessRamp = 0.0f;
+  int current_gait = -1;
   int gaitNumber;
 
   Vec3<float> world_position_desired;

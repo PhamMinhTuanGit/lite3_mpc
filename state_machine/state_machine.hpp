@@ -143,7 +143,7 @@ public:
         data_ptr->ri_ptr = ri_ptr_;
         data_ptr->uc_ptr = uc_ptr_;
         data_ptr->cp_ptr = cp_ptr_;
-        ds_ptr_ = std::make_shared<DataStreaming>(false, false);
+        ds_ptr_ = std::make_shared<DataStreaming>(true, true);
         data_ptr->ds_ptr = ds_ptr_;
 
         idle_controller_ = std::make_shared<IdleState>(robot_type, "idle_state", data_ptr);

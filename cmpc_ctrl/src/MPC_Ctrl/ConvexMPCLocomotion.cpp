@@ -181,10 +181,24 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
         omniMode = true;
     }
 
+    // Chế độ tay: nếu vận tốc lệnh ≈ 0, chuyển standing (MPC all 4 feet contact)
+    if (robotMode == 0 &&
+        fabs(_x_vel_des) < 0.01f &&
+        fabs(_y_vel_des) < 0.01f &&
+        fabs(_yaw_turn_rate) < 0.01f)
+    {
+        gaitNumber = 4;
+    }
+
     auto &seResult = _stateEstimator.getResult(); //状态估计器
 
+    // Capture the transition before current_gait is updated below. The flag is
+    // also used to latch the four current foot positions as standing anchors.
+    const bool enteringStanding =
+        (gaitNumber == 4) && (current_gait != 4 || firstRun);
+
     // Check if transition to standing 检查是否过渡到站立
-    if (((gaitNumber == 4) && current_gait != 4) || firstRun)
+    if (enteringStanding || firstRun)
     {
         stand_traj[0] = seResult.position[0];
         stand_traj[1] = seResult.position[1];
@@ -384,6 +398,30 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
         firstRun = false;
     }
 
+    // Standing uses fixed world-frame foot anchors. Without this latch the
+    // stance controller can reuse a stale sample from the previous swing.
+    if (enteringStanding)
+    {
+        standingStiffnessRamp = 0.0f;
+        for (int i = 0; i < 4; i++)
+        {
+            standingFootPositions[i] = pFoot[i];
+            footSwingTrajectories[i].setInitialPosition(pFoot[i]);
+            footSwingTrajectories[i].setFinalPosition(pFoot[i]);
+        }
+    }
+    else if (gaitNumber == 4)
+    {
+        // Avoid an instantaneous Cartesian-force step when all four legs become
+        // stance legs. Reach full lateral stiffness after about 1.0 second.
+        standingStiffnessRamp =
+            fminf(1.0f, standingStiffnessRamp + dt / 1.0f);
+    }
+    else
+    {
+        standingStiffnessRamp = 0.0f;
+    }
+
     // foot placement
     for (int l = 0; l < 4; l++)
     {
@@ -506,18 +544,23 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
     // load LCM leg swing gains
     // Kp << 700, 0, 0, 0, 700, 0, 0, 0, 50;
     Kp << 700, 0, 0, 0, 700, 0, 0, 0, 200;
-    Kp_stance = 0.0 * Kp;
+    // Use a conservative Y-only anchor. At the 3 cm error limit this produces
+    // at most 2.4 N per foot; vertical support remains entirely with MPC.
+    Kp_stance << 80, 0, 0,
+                 0, 80, 0,
+                 0, 0, 80;
+    Kp_stance *= standingStiffnessRamp;
 
     Kd << 10, 0, 0, 0, 10, 0, 0, 0, 10;
-    Kd_stance = 1.0 * Kd;
+    // Kd_stance = 1.0 * Kd;
     // Kp_stance << 0,  0,   0,
     //              0,  0,   0,
     //              0,  0, 80.0;  // Bắt đầu thử từ 50.0 đến 100.0 N/m
 
     // // Kd cho Stance:
-    // Kd_stance << 10.0,    0,    0,
-    //                 0, 10.0,    0,
-    //                 0,    0, 10.0;
+    Kd_stance << 10.0,    0,    0,
+                    0, 10.0,    0,
+                    0,    0, 10.0;
 
     // gait
     Vec4<float> contactStates = gait->getContactState();
@@ -581,16 +624,36 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
         {
             firstSwing[foot] = true;
 
-            Vec3<float> pDesFootWorld = footSwingTrajectories[foot].getPosition();
-            Vec3<float> vDesFootWorld = footSwingTrajectories[foot].getVelocity();
+            const bool standingNow = (gaitNumber == 4);
+            Vec3<float> pDesFootWorld = standingNow
+                                            ? standingFootPositions[foot]
+                                            : footSwingTrajectories[foot].getPosition();
+            Vec3<float> vDesFootWorld = standingNow
+                                            ? Vec3<float>::Zero()
+                                            : footSwingTrajectories[foot].getVelocity();
             Vec3<float> pDesLeg =
                 seResult.rBody * (pDesFootWorld - seResult.position) - _quadruped.getHipLocation(foot);
             Vec3<float> vDesLeg = seResult.rBody * (vDesFootWorld - seResult.vWorld);
+
+            if (standingNow)
+            {
+                // Bound lateral feedback to about 2.4 N at full stiffness. This
+                // preserves the world-frame anchor without allowing estimator
+                // transients to create a large sideways impulse.
+                const float maxLateralError = 0.03f;
+                const float lateralError =
+                    pDesLeg[1] - _legController.datas[foot].p[1];
+                pDesLeg[1] = _legController.datas[foot].p[1] +
+                             fminf(fmaxf(lateralError, -maxLateralError),
+                                   maxLateralError);
+            }
 
             if (!use_wbc)
             {
                 _legController.commands[foot].pDes = pDesLeg;
                 _legController.commands[foot].vDes = vDesLeg;
+                _legController.commands[foot].kpCartesian =
+                    standingNow ? Kp_stance : Mat3<float>::Zero();
 
                 if (foot == 1 || foot == 3)
                 {
@@ -608,7 +671,8 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
             { // Stance foot damping
                 _legController.commands[foot].pDes = pDesLeg;
                 _legController.commands[foot].vDes = vDesLeg;
-                _legController.commands[foot].kpCartesian = 0. * Kp_stance;
+                _legController.commands[foot].kpCartesian =
+                    standingNow ? Kp_stance : Mat3<float>::Zero();
                 _legController.commands[foot].kdCartesian = Kd_stance;
             }
             se_contactState[foot] = contactState;
