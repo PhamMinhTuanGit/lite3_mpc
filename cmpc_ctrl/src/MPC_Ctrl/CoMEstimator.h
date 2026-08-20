@@ -19,7 +19,7 @@ public:
      * @param deadband_threshold Minimum change threshold [m] for CoM (e.g. 0.002m = 2mm)
      * @param initial_mass Nominal robot mass [kg]
      */
-    CoMEstimator(float lambda = 0.998f, float filter_alpha = 0.05f, float deadband_threshold = 0.002f, float initial_mass = RobotConfig::MASS) 
+    CoMEstimator(float lambda = 0.998f, float filter_alpha = 0.05f, float deadband_threshold = 0.002f, float initial_mass = RobotConfig::MASS)
         : _lambda(lambda), _filter_alpha(filter_alpha), _deadband(deadband_threshold),
           _mass_nominal(initial_mass), _mass_raw(initial_mass), _mass_filtered(initial_mass), _mass_output(initial_mass) {
         reset();
@@ -93,7 +93,8 @@ public:
 
         // ── 3. ƯỚC LƯỢNG TỔNG KHỐI LƯỢNG (Mass Estimation) ──────────────
         // Theo định luật 2 Newton theo trục đứng: Fz_world = m * (g + az_world)
-        float eff_g = 9.81f + a_world_z;
+        // float eff_g = 9.81f + a_world_z;
+        float eff_g = a_world_z;
         if (eff_g > 5.0f && F_total_world_z > 40.0f) {
             _mass_raw = F_total_world_z / eff_g;
             _mass_raw = std::max(8.0f, std::min(25.0f, _mass_raw)); // Giới hạn dải khối lượng Lite3 [8kg, 25kg]
