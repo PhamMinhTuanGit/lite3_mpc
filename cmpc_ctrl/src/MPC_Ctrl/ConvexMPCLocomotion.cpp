@@ -119,45 +119,81 @@ void ConvexMPCLocomotion::_SetupCommand(StateEstimatorContainer<float> &_stateEs
 {
     _body_height = RobotConfig::BODY_HEIGHT;
 
-    float x_vel_cmd, y_vel_cmd, yaw_vel_cmd;
-    float x_filter(0.01), y_filter(0.006), yaw_filter(0.03);
+    // ── 1. Đọc và kẹp lệnh thô từ tay cầm ────────────────────────────────
+    float x_cmd = std::max(-0.3f, std::min(0.5f, static_cast<float>(gamepadCommand[0])));
+    float y_cmd = std::max(-0.3f, std::min(0.3f, static_cast<float>(gamepadCommand[1])));
+    float yaw_cmd = std::max(-0.8f, std::min(0.8f, static_cast<float>(gamepadCommand[2])));
 
-    //手柄数据先暂时设置为0，后面再给手柄赋值   旋转角速度和x,y方向上的线速度
-    x_vel_cmd = gamepadCommand[0];
-    y_vel_cmd = gamepadCommand[1];
-    yaw_vel_cmd = gamepadCommand[2];
+    // ── 2. Bộ định hình biên dạng S-Curve (Giới hạn chặt Gia tốc & Jerk) ──
+    const float dt_ctrl = (dt > 1e-4f) ? dt : 0.002f;
 
-    _x_vel_des = _x_vel_des * (1 - x_filter) + x_vel_cmd * x_filter; //一阶低通数字滤波
-    _y_vel_des = _y_vel_des * (1 - y_filter) + y_vel_cmd * y_filter;
-    _yaw_turn_rate = _yaw_turn_rate * (1 - yaw_filter) + yaw_vel_cmd * yaw_filter;
-    if (_x_vel_des > 2.0)
+    // Trục X (Tiến/Lùi): V_max = 0.5 m/s, A_max = 0.8 m/s^2, Jerk_max = 3.0 m/s^3
     {
-        _x_vel_des = 2.0;
-    }
-    else if (_x_vel_des < -1.0)
-    {
-        _x_vel_des = -1.0;
-    }
-    if (_y_vel_des > 0.6)
-    {
-        _y_vel_des = 0.6;
-    }
-    else if (_y_vel_des < -0.6)
-    {
-        _y_vel_des = -0.6;
-    }
-    _yaw_des = _stateEstimator.getResult().rpy[2] + dt * _yaw_turn_rate; //涉及到了状态估计中的欧拉角
+        const float a_max = 0.8f;
+        const float jerk_max = 3.0f;
+        const float tau = 0.15f; // Thời gian đáp ứng
 
-    //确保机器人不会因为摩擦力的原因在yaw方向产生旋转误差
-    if ((abs(_stateEstimator.getResult().rpy[2] - _yaw_des_true) > 5.0))
+        float a_target = (x_cmd - _x_vel_des) / tau;
+        a_target = std::max(-a_max, std::min(a_max, a_target));
+
+        float j_raw = (a_target - _x_acc_des) / dt_ctrl;
+        float j_clamped = std::max(-jerk_max, std::min(jerk_max, j_raw));
+
+        _x_acc_des += j_clamped * dt_ctrl;
+        _x_acc_des = std::max(-a_max, std::min(a_max, _x_acc_des));
+
+        _x_vel_des += _x_acc_des * dt_ctrl;
+        _x_vel_des = std::max(-0.3f, std::min(0.5f, _x_vel_des));
+    }
+
+    // Trục Y (Ngang): V_max = 0.3 m/s, A_max = 0.5 m/s^2, Jerk_max = 2.0 m/s^3
     {
-        // _yaw_des_true = 3.14 * _stateEstimator.getResult().rpy[2] / abs(_stateEstimator.getResult().rpy[2]);
+        const float a_max = 0.5f;
+        const float jerk_max = 2.0f;
+        const float tau = 0.15f;
+
+        float a_target = (y_cmd - _y_vel_des) / tau;
+        a_target = std::max(-a_max, std::min(a_max, a_target));
+
+        float j_raw = (a_target - _y_acc_des) / dt_ctrl;
+        float j_clamped = std::max(-jerk_max, std::min(jerk_max, j_raw));
+
+        _y_acc_des += j_clamped * dt_ctrl;
+        _y_acc_des = std::max(-a_max, std::min(a_max, _y_acc_des));
+
+        _y_vel_des += _y_acc_des * dt_ctrl;
+        _y_vel_des = std::max(-0.3f, std::min(0.3f, _y_vel_des));
+    }
+
+    // Trục Yaw (Quay): W_max = 0.8 rad/s, A_max = 1.5 rad/s^2, Jerk_max = 5.0 rad/s^3
+    {
+        const float a_max = 1.5f;
+        const float jerk_max = 5.0f;
+        const float tau = 0.10f;
+
+        float a_target = (yaw_cmd - _yaw_turn_rate) / tau;
+        a_target = std::max(-a_max, std::min(a_max, a_target));
+
+        float j_raw = (a_target - _yaw_acc_des) / dt_ctrl;
+        float j_clamped = std::max(-jerk_max, std::min(jerk_max, j_raw));
+
+        _yaw_acc_des += j_clamped * dt_ctrl;
+        _yaw_acc_des = std::max(-a_max, std::min(a_max, _yaw_acc_des));
+
+        _yaw_turn_rate += _yaw_acc_des * dt_ctrl;
+        _yaw_turn_rate = std::max(-0.8f, std::min(0.8f, _yaw_turn_rate));
+    }
+
+    _yaw_des = _stateEstimator.getResult().rpy[2] + dt * _yaw_turn_rate;
+
+    if ((std::fabs(_stateEstimator.getResult().rpy[2] - _yaw_des_true) > 5.0f))
+    {
         _yaw_des_true = _stateEstimator.getResult().rpy[2];
     }
     _yaw_des_true = _yaw_des_true + dt * _yaw_turn_rate;
 
-    _roll_des = 0.;
-    _pitch_des = 0.;
+    _roll_des = 0.0f;
+    _pitch_des = 0.0f;
 }
 
 template <>
@@ -348,14 +384,14 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
                  : seResult.rBody.transpose() * v_des_robot; //Desired linear velocity in world coordinate system
     Vec3<float> v_robot = seResult.vWorld;                   //The robot's actual speed in the world coordinate system
 
-    // Integral-esque pitche and roll compensation
+    // Integral-esque pitch and roll compensation
     // Points reach compensation value*******************************
     // To keep the body parallel to the ground during exercise
-    if (fabs(v_robot[0]) > .2) // avoid dividing by zero
+    if (fabs(v_robot[0]) > 0.02f) // avoid dividing by zero
     {
         rpy_int[1] += dt * (_pitch_des - seResult.rpy[1]) / v_robot[0];
     }
-    if (fabs(v_robot[1]) > 0.1)
+    if (fabs(v_robot[1]) > 0.02f)
     {
         rpy_int[0] += dt * (_roll_des - seResult.rpy[0]) / v_robot[1];
     }
@@ -435,11 +471,9 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
     float side_sign[4] = {-1, 1, -1, 1};
 
     // ── Interleave offset ──────────────────────────────────────────────────────
-    // Dịch chuyển ngang nhỏ theo tốc độ tiến để tăng ổn định dynamic.
-    // interleave_y[i] * v_abs * interleave_gain cộng vào tọa độ Y của hip.
-    // Set tất cả = 0 và interleave_gain = 0 để chân đặt thẳng dưới hip.
-    float interleave_y[4] = {0.08, -0.08, -0.02, 0.02};
-    float interleave_gain = -0.2;
+    // Đặt interleave_gain = 0 để 4 chân đặt hoàn toàn đối xứng dưới hip, loại bỏ lắc lư
+    float interleave_y[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float interleave_gain = 0.0f;
 
     // Tốc độ tuyến tính mong muốn theo trục x (body frame), dùng scale interleave
     float v_abs = std::fabs(v_des_robot[0]);
@@ -486,9 +520,7 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
         Vec3<float> Pf =
             seResult.position + seResult.rBody.transpose() * (pYawCorrected + des_vel * swingTimeRemaining[i]);
 
-        // float p_rel_max = 0.3f; // giới hạn step offset tối đa [m]
-        // float p_rel_max = 0.05f; // giới hạn step offset tối đa [m]
-        float p_rel_max = 0.05f; // giới hạn step offset tối đa [m]
+        float p_rel_max = 0.15f; // giới hạn step offset tối đa [m] cho tốc độ 0.5 m/s
 
         // ── 6. Raibert symmetry + capture point correction ────────────────────
 
@@ -517,7 +549,7 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
      *   Term 3 dùng (-vx * yaw_rate) thay vì (vy * yaw_rate)
      *   → Bù moment quay theo chiều ngược lại
      */
-        float pfy_rel = seResult.vWorld[1] * 0.5f * stance_time + 0.03f * (seResult.vWorld[1] - v_des_world[1]) +
+        float pfy_rel = seResult.vWorld[1] * 0.5f * stance_time + 0.06f * (seResult.vWorld[1] - v_des_world[1]) +
                         (0.5f * sqrtf(seResult.position[2] / 9.81f)) * (-seResult.vWorld[0] * _yaw_turn_rate);
 
         // ── 7. Clamp offset ───────────────────────────────────────────────────
@@ -653,6 +685,8 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
                 _legController.commands[foot].pDes = pDesLeg;
                 _legController.commands[foot].vDes = vDesLeg;
                 Mat3<float> Kp_trot_stance = Mat3<float>::Zero();
+                Kp_trot_stance(0, 0) = 40.0f;
+                Kp_trot_stance(1, 1) = 40.0f;
                 Kp_trot_stance(2, 2) = 80.0f;
                 _legController.commands[foot].kpCartesian =
                     standingNow ? Kp_stance : Kp_trot_stance;
@@ -822,14 +856,8 @@ void ConvexMPCLocomotion::solveDenseMPC(int *mpcTable,
 {
     auto seResult = _stateEstimator.getResult();
 
-    // float Q[12] = {0.25, 0.25, 10, 2, 2, 20, 0, 0, 0.3, 0.2, 0.2, 0.2};
-
-    //   float Q[12] = {2.5, 2.5, 10, 2, 2, 40, 0, 0, 0.3, 0.2, 0.2, 0.2};
-    //   float Q[12] = {2.5, 2.5, 1000, 2, 2, 400, 0.1, 0.1, 0.3, 0.2, 0.2, 0.2}; // okie for 4s standing
-    float Q[12] = {2.5, 2.5, 100, 2, 1, 400, 0.1, 0.1, 0.3, 0.2, 0.2, 0.2};
-    // float Q[12] = {0, 0, 0, 10, 10, 10, 0, 0, 0, 0, 0, 0};
-
-    // float Q[12] = {0.25, 0.25, 10, 2, 2, 40, 0, 0, 0.3, 0.2, 0.2, 0.2};
+    // Q matrix weights: [Roll, Pitch, Yaw, X, Y, Z, dRoll, dPitch, dYaw, Vx, Vy, Vz]
+    float Q[12] = {25.0f, 30.0f, 80.0f, 5.0f, 5.0f, 350.0f, 1.0f, 1.2f, 1.5f, 0.5f, 2.0f, 0.2f};
     float yaw = seResult.rpy[2];
     float *weights = Q;
     float alpha = RobotConfig::MPC_ALPHA;
@@ -874,12 +902,7 @@ void ConvexMPCLocomotion::solveDenseMPC(int *mpcTable,
                _comEstimator.getEstimatedMassRaw(), _comEstimator.getTotalSupportForce());
     }
 
-    // ── Code gốc (Original code):
-    // float r[12];
-    // for (int i = 0; i < 12; i++)
-    //     r[i] = pFoot[i % 4][i / 4] - seResult.position[i / 4];
-
-    // ── Phương pháp 4: Bù độ lệch CoM ước lượng vào cánh tay đòn MPC ──
+    // ── Cánh tay đòn MPC có bù độ lệch CoM ước lượng ──────────────────
     float r[12];
     for (int i = 0; i < 12; i++)
         r[i] = pFoot[i % 4][i / 4] - (seResult.position[i / 4] + r_com_world[i / 4]);

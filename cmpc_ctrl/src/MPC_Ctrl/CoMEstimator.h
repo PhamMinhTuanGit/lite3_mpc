@@ -132,6 +132,20 @@ public:
         applyCoMFiltering();
     }
 
+    /*!
+     * @brief Update mass estimate only (CoM estimation disabled)
+     * @param f_feet_actual_world 3x4 actual reaction forces in world frame [N] (from joint torques)
+     * @param contact_states 4x1 contact state (1 for stance, 0 for swing)
+     */
+    void updateMassOnly(const Eigen::Matrix<float, 3, 4>& f_feet_actual_world,
+                        const Eigen::Vector4f& contact_states)
+    {
+        estimateTotalMassFromTorques(f_feet_actual_world, contact_states);
+        _r_com_raw.setZero();
+        _r_com_filtered.setZero();
+        _r_com_output.setZero();
+    }
+
     // ── Getters (Encapsulation) ──────────────────────────────────────────
     const Eigen::Vector3f& getCoMOffset() const { return _r_com_output; }
     const Eigen::Vector3f& getCoMOffsetRaw() const { return _r_com_raw; }

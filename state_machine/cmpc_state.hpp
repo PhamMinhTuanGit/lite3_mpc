@@ -129,9 +129,9 @@ private:
     void UpdateVelocityCommand() {
         auto cmd = uc_ptr_->GetUserCommand();
         double vel[3] = {
-            cmd.forward_vel_scale  * 1.0,   // vx: max 3 m/s
-            cmd.side_vel_scale     * 1.0,   // vy: max 2 m/s
-            cmd.turnning_vel_scale * 1.0    // yaw rate: max 2.5 rad/s
+            cmd.forward_vel_scale  * 0.5,   // vx: max 0.5 m/s
+            cmd.side_vel_scale     * 0.3,   // vy: max 0.3 m/s
+            cmd.turnning_vel_scale * 0.8    // yaw rate: max 0.8 rad/s
         };
         // std::cout << "vel :" << vel[0] << " ; " << vel[1] << " ; " << vel[2] << std::endl;
         gait_ctrl_->SetRobotVel(vel);
