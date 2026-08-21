@@ -76,8 +76,8 @@ void GaitCtrller::PreWork(double *imuData, double *motorData)
 {
     SetIMUData(imuData);
     SetLegData(motorData);
-    _stateEstimator->run();
     _legController->updateData(&_legdata);
+    _stateEstimator->run();
 }
 
 void GaitCtrller::SetGaitType(int gaitType)

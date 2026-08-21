@@ -40,8 +40,8 @@ private:
     // Chạy TorqueCalculator mỗi `kDecimation` lần Run() (1 = mỗi tick)
     static constexpr int kDecimation = 1;
 
-    // Must match the simulation YAML config (freq tuning for MPC timestep)
-    static constexpr double freq       = 500.0; // freq
+    // 1000 Hz loop frequency (dt = 0.001s), matching hardware packet rate & LinearKF
+    static constexpr double freq       = 1000.0; // freq
     static constexpr double kStandKp   = 100.0;
     static constexpr double kStandKd   = 1.0;
     static constexpr double kJointKp   = 0.0;
