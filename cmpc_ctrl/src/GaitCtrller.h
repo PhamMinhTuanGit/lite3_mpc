@@ -19,6 +19,7 @@
 #include "Dynamics/MiniCheetah.h"          // original (no payload)
 // #include "Dynamics/MiniCheetahWithPayload.h"  // with 2 kg payload
 #include "MPC_Ctrl/ConvexMPCLocomotion.h"
+#include "MPC_Ctrl/CmpcTelemetry.h"
 #include "Utilities/IMUTypes.h"
 #include "calculateTool.h"
 
@@ -38,7 +39,7 @@ public:
     void SetGaitType(int gaitType);
     void SetRobotMode(int mode);
     void SetRobotVel(double *vel);
-    void TorqueCalculator(double *imuData, double *motorData, double *effort);
+    void TorqueCalculator(double *imuData, double *motorData, double *effort, CmpcTelemetryData *telem = nullptr);
 
 private:
     int _gaitType = 0;
@@ -107,7 +108,18 @@ extern "C"
     JointEff *torque_calculator(double imuData[], double motorData[])
     {
         double eff[12] = {0.0};
-        gCtrller->TorqueCalculator(imuData, motorData, eff);
+        gCtrller->TorqueCalculator(imuData, motorData, eff, nullptr);
+        for (int i = 0; i < 12; i++)
+        {
+            jointEff.eff[i] = eff[i];
+        }
+        return &jointEff;
+    }
+
+    JointEff *torque_calculator_with_telem(double imuData[], double motorData[], CmpcTelemetryData *telem)
+    {
+        double eff[12] = {0.0};
+        gCtrller->TorqueCalculator(imuData, motorData, eff, telem);
         for (int i = 0; i < 12; i++)
         {
             jointEff.eff[i] = eff[i];

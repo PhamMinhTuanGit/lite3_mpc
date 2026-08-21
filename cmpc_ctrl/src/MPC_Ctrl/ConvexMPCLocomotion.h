@@ -111,6 +111,11 @@ public:
 
   Vec4<float> contact_state;
 
+  float getDesVx() const { return _x_vel_des; }
+  float getDesVy() const { return _y_vel_des; }
+  float getDesYawRate() const { return _yaw_turn_rate; }
+  const CoMEstimator& getCoMEstimator() const { return _comEstimator; }
+
 private:
   void _SetupCommand(StateEstimatorContainer<float> &_stateEstimator, std::vector<double> gamepadCommand);
 

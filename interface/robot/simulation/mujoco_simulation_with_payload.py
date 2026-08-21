@@ -17,9 +17,18 @@ XML_PATH = "../../../Lite3_description/lite3_mjcf/mjcf/Lite3_stair.xml"
 LOCAL_PORT = 20001
 CTRL_IP = "127.0.0.1"
 CTRL_PORT = 30010
-USE_VIEWER = True
+# Viewer có thể tắt bằng biến môi trường VIEWER=0 (cho chạy test headless tự động).
+USE_VIEWER = os.environ.get("VIEWER", "1") == "1"
 DT = 0.001
 RENDER_INTERVAL = 10
+
+# ── Ground-truth base state logging (chỉ bật khi có BASELOG_PATH) ───────────
+# Ghi vận tốc / vị trí CoM theo world frame (chỉ có ở phía simulation) để xác
+# minh rằng robot thực sự đạt vận tốc mong muốn.  Định dạng CSV:
+#   sim_time, world_x, world_y, world_z, vx, vy, vz
+BASELOG_PATH = os.environ.get("BASELOG_PATH")        # None = không ghi
+BASELOG_INTERVAL = int(os.environ.get("BASELOG_INTERVAL", "50"))  # số step giữa 2 sample (50 -> 50 ms)
+
 
 # ── Payload configuration (simulation only, controller model unchanged) ─────
 # When ENABLE_PAYLOAD is True, use Lite3_payload.xml which adds a separate 2 kg
@@ -91,6 +100,14 @@ class MuJoCoSimulation:
         if USE_VIEWER:
             self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
 
+        # Ground-truth base state log file (mở nếu được yêu cầu qua env)
+        self.baselog_fp = None
+        if BASELOG_PATH:
+            self.baselog_fp = open(BASELOG_PATH, "w")
+            self.baselog_fp.write("sim_time,world_x,world_y,world_z,vx,vy,vz\n")
+            self.baselog_fp.flush()
+            print(f"[INFO] Base-state log enabled -> {BASELOG_PATH} (every {BASELOG_INTERVAL} steps)")
+
     def _set_initial_pose(self, key: str):
         """Set joint positions to match PyBullet initial angles."""
         qpos0 = self.data.qpos.copy()
@@ -115,8 +132,13 @@ class MuJoCoSimulation:
         mujoco.mju_quat2Mat(mat, q_world.astype(np.float64))
         R = mat.reshape(3, 3)
         body_acc = self.data.sensordata[16:19]
+        # Ground-truth base pose/vel (world frame) — chỉ print để chẩn đoán
+        base_pos = self.data.qpos[0:3]
+        base_vel = self.data.qvel[0:3]
 
         print(f"{Fore.CYAN}=== [Debug Info] ==={Style.RESET_ALL}")
+        print(f"{Fore.CYAN}[Base] Pos (xyz) :{Style.RESET_ALL} {format_array(base_pos)}")
+        print(f"{Fore.CYAN}[Base] Vel (xyz):{Style.RESET_ALL} {format_array(base_vel)}")
         print(f"{Fore.GREEN}[IMU] RPY        :{Style.RESET_ALL} {format_array(rpy.flatten())}")
         print(f"{Fore.GREEN}[IMU] Omega      :{Style.RESET_ALL} {format_array(angvel_b.flatten())}")
         print(f"{Fore.GREEN}[IMU] Acc_body   :{Style.RESET_ALL} {format_array(body_acc.flatten())}")
@@ -156,6 +178,13 @@ class MuJoCoSimulation:
 
                 # 采样 & 发送观测
                 self._send_robot_state(step)
+                # Ground-truth base state log (nếu được bật)
+                if self.baselog_fp and step % BASELOG_INTERVAL == 0:
+                    bp = self.data.qpos[0:3]
+                    bv = self.data.qvel[0:3]
+                    self.baselog_fp.write(
+                        f"{self.timestamp },{bp[0]},{bp[1]},{bp[2]},{bv[0]},{bv[1]},{bv[2]}\n")
+                    self.baselog_fp.flush()
                 # 可视化
                 if self.viewer and step % RENDER_INTERVAL == 0:
                     self.viewer.sync()

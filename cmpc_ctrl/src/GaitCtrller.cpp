@@ -122,7 +122,7 @@ void GaitCtrller::SetRobotVel(double *vel)
     }
 }
 
-void GaitCtrller::TorqueCalculator(double *imuData, double *motorData, double *effort)
+void GaitCtrller::TorqueCalculator(double *imuData, double *motorData, double *effort, CmpcTelemetryData *telem)
 {
     Timer t_total;
 
@@ -174,6 +174,55 @@ void GaitCtrller::TorqueCalculator(double *imuData, double *motorData, double *e
     double t_leg_ms = t_leg.getMs(); // leg torque computation
 
     double t_total_ms = t_total.getMs();
+
+    if (telem != nullptr)
+    {
+        telem->cmd_vx = (float)_gamepadCommand[0];
+        telem->cmd_vy = (float)_gamepadCommand[1];
+        telem->cmd_yaw_rate = (float)_gamepadCommand[2];
+        telem->des_vx = convexMPC->getDesVx();
+        telem->des_vy = convexMPC->getDesVy();
+        telem->des_yaw_rate = convexMPC->getDesYawRate();
+
+        const auto &se = _stateEstimator->getResult();
+        for (int i = 0; i < 3; i++)
+        {
+            telem->kf_pos[i] = se.position[i];
+            telem->kf_vel_world[i] = se.vWorld[i];
+            telem->kf_vel_body[i] = se.vBody[i];
+            telem->kf_rpy[i] = se.rpy[i];
+            telem->kf_omega_body[i] = se.omegaBody[i];
+            telem->kf_acc_body[i] = se.aBody[i];
+        }
+        for (int i = 0; i < 4; i++)
+        {
+            telem->kf_contact_prob[i] = se.contactEstimate[i];
+        }
+
+        const auto &comEst = convexMPC->getCoMEstimator();
+        telem->est_mass_raw = comEst.getEstimatedMassRaw();
+        telem->est_mass_filtered = comEst.getEstimatedMass();
+        for (int i = 0; i < 3; i++)
+        {
+            telem->est_com_body[i] = comEst.getCoMOffset()[i];
+        }
+        telem->total_support_force_z = comEst.getTotalSupportForce();
+
+        for (int i = 0; i < 4; i++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                telem->p_feet_des_world[i][j] = convexMPC->pFoot_des[i][j];
+                telem->p_feet_actual_body[i][j] = _legController->datas[i].p[j];
+                telem->f_mpc_des_world[i][j] = convexMPC->Fr_des[i][j];
+                telem->f_act_est_world[i][j] = _legController->commands[i].forceFeedForward[j];
+            }
+        }
+
+        telem->t_est_ms = (float)t_est_ms;
+        telem->t_mpc_ms = (float)t_mpc_ms;
+        telem->t_total_ms = (float)t_total_ms;
+    }
     static int log_cnt = 0;
     if ((log_cnt++ % 100) == 0) // in mỗi 100 tick để tránh spam
     {

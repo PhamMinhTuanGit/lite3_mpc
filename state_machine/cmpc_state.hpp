@@ -15,10 +15,12 @@
 
 #include "state_base.h"
 #include "cmpc_bridge.h"
+#include "cmpc_logger.hpp"
 
 class CMPCState : public StateBase {
 private:
     std::unique_ptr<CMPCBridge> gait_ctrl_;
+    CmpcLogger cmpc_logger_;
     Eigen::Matrix<float, 12, 5> joint_cmd_;
     double run_time_ = 0.0;
     double time_stamp_record_ = 0.0;
@@ -31,9 +33,10 @@ private:
     std::atomic<bool>    has_first_calc_{false};
     static constexpr int64_t kCmpcDeadlineMs = 100; // Deadline 100ms cho mỗi chu kỳ tính torque
     std::mutex           data_mtx_;
-    // Bộ đệm quan sát: Run() (vòng FSM) ghi, thread nền đọc (q: 12, qd: 12, tau: 12)
+    // Bộ đệm quan sát: Run() (vòng FSM) ghi, thread nền đọc (q: 12, qd: 12, tau: 12, vel: 3)
     double imu_data_[10]   = {};
     double motor_data_[36] = {};
+    double vel_cmd_[3]     = {};
     // Chạy TorqueCalculator mỗi `kDecimation` lần Run() (1 = mỗi tick)
     static constexpr int kDecimation = 1;
 
@@ -126,15 +129,11 @@ private:
         ri_ptr_->SetJointCommand(joint_cmd_);
     }
 
-    void UpdateVelocityCommand() {
+    void BuildVelocityCommand(double* vel) {
         auto cmd = uc_ptr_->GetUserCommand();
-        double vel[3] = {
-            cmd.forward_vel_scale  * 0.5,   // vx: max 0.5 m/s
-            cmd.side_vel_scale     * 0.3,   // vy: max 0.3 m/s
-            cmd.turnning_vel_scale * 0.8    // yaw rate: max 0.8 rad/s
-        };
-        // std::cout << "vel :" << vel[0] << " ; " << vel[1] << " ; " << vel[2] << std::endl;
-        gait_ctrl_->SetRobotVel(vel);
+        vel[0] = cmd.forward_vel_scale  * 0.5;   // vx: max 0.5 m/s
+        vel[1] = cmd.side_vel_scale     * 0.3;   // vy: max 0.3 m/s
+        vel[2] = cmd.turnning_vel_scale * 0.8;   // yaw rate: max 0.8 rad/s
     }
 
     // Thread nền: chạy bộ điều khiển nặng (TorqueCalculator) độc lập với vòng FSM
@@ -143,15 +142,35 @@ private:
         while (start_flag_) {
             int cnt = state_run_cnt_.load();
             if (cnt >= 0 && cnt % kDecimation == 0 && cnt != run_cnt_record) {
-                // Lấy bản sao quan sát mới nhất (tránh đọc rách giữa lúc Run() ghi)
-                double imu[10], motor[36], effort[12] = {};
+                // Lấy bản sao quan sát + lệnh vận tốc đồng bộ hoàn toàn (Atomic Snapshot)
+                double imu[10], motor[36], vel[3], effort[12] = {};
                 {
                     std::lock_guard<std::mutex> lk(data_mtx_);
                     std::memcpy(imu,   imu_data_,   sizeof(imu));
                     std::memcpy(motor, motor_data_, sizeof(motor));
+                    std::memcpy(vel,   vel_cmd_,    sizeof(vel));
                 }
-                gait_ctrl_->TorqueCalculator(imu, motor, effort);
+                gait_ctrl_->SetRobotVel(vel);
+                CmpcTelemetryData telem = {};
+                gait_ctrl_->TorqueCalculator(imu, motor, effort, &telem);
                 ApplyEffort(effort);
+
+                double time_ms = (ri_ptr_) ? (ri_ptr_->GetInterfaceTimeStamp() * 1000.0) : 0.0;
+                cmpc_logger_.Log(time_ms, telem);
+
+                if (ds_ptr_) {
+                    ds_ptr_->InsertCmpcTelemetry(telem);
+                    ds_ptr_->InsertScopeData(0, telem.cmd_vx);
+                    ds_ptr_->InsertScopeData(1, telem.des_vx);
+                    ds_ptr_->InsertScopeData(2, telem.kf_vel_body[0]);
+                    ds_ptr_->InsertScopeData(3, telem.kf_rpy[1]); // pitch
+                    ds_ptr_->InsertScopeData(4, telem.kf_pos[2]); // height z
+                    ds_ptr_->InsertScopeData(5, telem.est_mass_filtered);
+                    ds_ptr_->InsertScopeData(6, telem.est_com_body[0]); // dx
+                    ds_ptr_->InsertScopeData(7, telem.est_com_body[1]); // dy
+                    ds_ptr_->InsertScopeData(8, telem.total_support_force_z);
+                    ds_ptr_->InsertScopeData(9, telem.t_total_ms);
+                }
 
                 auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -194,6 +213,9 @@ public:
         // gait_ctrl_->SetGaitType(10);   // 10 = walking
         gait_ctrl_->SetRobotMode(0);  // 0 = follow user velocity command
 
+        // Khởi tạo CmpcLogger
+        cmpc_logger_.Init();
+
         // Khởi động thread nền SAU khi gait_ctrl_ đã sẵn sàng
         has_first_calc_.store(false);
         last_calc_time_ms_.store(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -209,19 +231,20 @@ public:
         state_run_cnt_ = -1;
         has_first_calc_.store(false);
         gait_ctrl_.reset();
+        cmpc_logger_.Close();
     }
 
     virtual void Run() override {
         run_time_ = ri_ptr_->GetInterfaceTimeStamp();
 
-        // Vòng FSM chỉ cập nhật quan sát + tăng bộ đếm (nhẹ);
+        // Vòng FSM chỉ cập nhật quan sát + lệnh vận tốc + tăng bộ đếm (nhẹ);
         // tính mô-men nặng do CmpcRunner() lo ở thread riêng.
         {
             std::lock_guard<std::mutex> lk(data_mtx_);
             BuildImuData(imu_data_);
             BuildMotorData(motor_data_);
+            BuildVelocityCommand(vel_cmd_);
         }
-        UpdateVelocityCommand();
         ++state_run_cnt_;
     }
 

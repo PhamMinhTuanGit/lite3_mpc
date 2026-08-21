@@ -13,6 +13,7 @@ extern "C" {
     void set_robot_mode(int mode);
     void set_robot_vel(double vel[]);
     JointEff* torque_calculator(double imuData[], double motorData[]);
+    JointEff* torque_calculator_with_telem(double imuData[], double motorData[], CmpcTelemetryData* telem);
 }
 
 CMPCBridge::CMPCBridge(double freq, double* pidParam4) {
@@ -25,7 +26,12 @@ void CMPCBridge::SetGaitType(int g) { set_gait_type(g); }
 void CMPCBridge::SetRobotMode(int m) { set_robot_mode(m); }
 void CMPCBridge::SetRobotVel(double* v) { set_robot_vel(v); }
 
-void CMPCBridge::TorqueCalculator(double* imu, double* motor, double* effort) {
-    JointEff* res = torque_calculator(imu, motor);
+void CMPCBridge::TorqueCalculator(double* imu, double* motor, double* effort, CmpcTelemetryData* telem) {
+    JointEff* res = nullptr;
+    if (telem != nullptr) {
+        res = torque_calculator_with_telem(imu, motor, telem);
+    } else {
+        res = torque_calculator(imu, motor);
+    }
     std::memcpy(effort, res->eff, 12 * sizeof(double));
 }

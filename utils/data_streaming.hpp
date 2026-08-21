@@ -22,7 +22,9 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <csignal>
+#include <mutex>
 #include "json.hpp"
+#include "MPC_Ctrl/CmpcTelemetry.h"
 
 #define LOCAL_PORT 1021
 
@@ -30,6 +32,7 @@ class DataStreaming{
 private:
     int sockfd_;
     sockaddr_in remote_addr_;
+    std::mutex data_mutex_;
 
     FILE *fp_;
     std::string file_name_;
@@ -115,10 +118,58 @@ public:
             }
         }
         scope_data_.resize(10, 0);
+        InitJsonSchema();
     }
     ~DataStreaming(){}
 
+    void InitJsonSchema() {
+        data_json_["t_r"] = 0.0f;
+        data_json_["t_i"] = 0.0f;
+        data_json_["state"]["current_state"] = 0;
+        data_json_["user_command"]["target_mode"] = 0;
+
+        // Pre-populate CMPC & Linear KF telemetry keys so PlotJuggler receives the full schema from packet 0
+        data_json_["cmpc"]["cmd_vx"] = 0.0f;
+        data_json_["cmpc"]["cmd_vy"] = 0.0f;
+        data_json_["cmpc"]["cmd_yaw_rate"] = 0.0f;
+        data_json_["cmpc"]["des_vx"] = 0.0f;
+        data_json_["cmpc"]["des_vy"] = 0.0f;
+        data_json_["cmpc"]["des_yaw_rate"] = 0.0f;
+
+        data_json_["cmpc"]["kf_pos_x"] = 0.0f;
+        data_json_["cmpc"]["kf_pos_y"] = 0.0f;
+        data_json_["cmpc"]["kf_pos_z"] = 0.29f;
+
+        data_json_["cmpc"]["kf_vel_world_x"] = 0.0f;
+        data_json_["cmpc"]["kf_vel_world_y"] = 0.0f;
+        data_json_["cmpc"]["kf_vel_world_z"] = 0.0f;
+
+        data_json_["cmpc"]["kf_vel_body_x"] = 0.0f;
+        data_json_["cmpc"]["kf_vel_body_y"] = 0.0f;
+        data_json_["cmpc"]["kf_vel_body_z"] = 0.0f;
+
+        data_json_["cmpc"]["kf_roll"] = 0.0f;
+        data_json_["cmpc"]["kf_pitch"] = 0.0f;
+        data_json_["cmpc"]["kf_yaw"] = 0.0f;
+
+        data_json_["cmpc"]["kf_omega_x"] = 0.0f;
+        data_json_["cmpc"]["kf_omega_y"] = 0.0f;
+        data_json_["cmpc"]["kf_omega_z"] = 0.0f;
+
+        data_json_["cmpc"]["est_mass_raw"] = 11.94f;
+        data_json_["cmpc"]["est_mass_filtered"] = 11.94f;
+        data_json_["cmpc"]["est_com_x"] = 0.0f;
+        data_json_["cmpc"]["est_com_y"] = 0.0f;
+        data_json_["cmpc"]["est_com_z"] = 0.0f;
+        data_json_["cmpc"]["total_support_fz"] = 0.0f;
+
+        data_json_["cmpc"]["t_est_ms"] = 0.0f;
+        data_json_["cmpc"]["t_mpc_ms"] = 0.0f;
+        data_json_["cmpc"]["t_total_ms"] = 0.0f;
+    }
+
     void SendData(){
+        std::lock_guard<std::mutex> lock(data_mutex_);
         ++run_cnt_;
         float ts = GetTimestampMs();
         data_json_["t_r"] = ts/1000.;
@@ -136,6 +187,47 @@ public:
             }
         }
         // return nbytes;
+    }
+
+    void InsertCmpcTelemetry(const CmpcTelemetryData& telem){
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        data_json_["cmpc"]["cmd_vx"] = telem.cmd_vx;
+        data_json_["cmpc"]["cmd_vy"] = telem.cmd_vy;
+        data_json_["cmpc"]["cmd_yaw_rate"] = telem.cmd_yaw_rate;
+        data_json_["cmpc"]["des_vx"] = telem.des_vx;
+        data_json_["cmpc"]["des_vy"] = telem.des_vy;
+        data_json_["cmpc"]["des_yaw_rate"] = telem.des_yaw_rate;
+
+        data_json_["cmpc"]["kf_pos_x"] = telem.kf_pos[0];
+        data_json_["cmpc"]["kf_pos_y"] = telem.kf_pos[1];
+        data_json_["cmpc"]["kf_pos_z"] = telem.kf_pos[2];
+
+        data_json_["cmpc"]["kf_vel_world_x"] = telem.kf_vel_world[0];
+        data_json_["cmpc"]["kf_vel_world_y"] = telem.kf_vel_world[1];
+        data_json_["cmpc"]["kf_vel_world_z"] = telem.kf_vel_world[2];
+
+        data_json_["cmpc"]["kf_vel_body_x"] = telem.kf_vel_body[0];
+        data_json_["cmpc"]["kf_vel_body_y"] = telem.kf_vel_body[1];
+        data_json_["cmpc"]["kf_vel_body_z"] = telem.kf_vel_body[2];
+
+        data_json_["cmpc"]["kf_roll"] = telem.kf_rpy[0];
+        data_json_["cmpc"]["kf_pitch"] = telem.kf_rpy[1];
+        data_json_["cmpc"]["kf_yaw"] = telem.kf_rpy[2];
+
+        data_json_["cmpc"]["kf_omega_x"] = telem.kf_omega_body[0];
+        data_json_["cmpc"]["kf_omega_y"] = telem.kf_omega_body[1];
+        data_json_["cmpc"]["kf_omega_z"] = telem.kf_omega_body[2];
+
+        data_json_["cmpc"]["est_mass_raw"] = telem.est_mass_raw;
+        data_json_["cmpc"]["est_mass_filtered"] = telem.est_mass_filtered;
+        data_json_["cmpc"]["est_com_x"] = telem.est_com_body[0];
+        data_json_["cmpc"]["est_com_y"] = telem.est_com_body[1];
+        data_json_["cmpc"]["est_com_z"] = telem.est_com_body[2];
+        data_json_["cmpc"]["total_support_fz"] = telem.total_support_force_z;
+
+        data_json_["cmpc"]["t_est_ms"] = telem.t_est_ms;
+        data_json_["cmpc"]["t_mpc_ms"] = telem.t_mpc_ms;
+        data_json_["cmpc"]["t_total_ms"] = telem.t_total_ms;
     }
 
     void InsertInterfaceTime(float data){
