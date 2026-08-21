@@ -8,6 +8,7 @@
 #include <qpOASES/include/qpOASES.hpp>
 #include <stdio.h>
 #include <sys/time.h>
+#include <vector>
 #include <Utilities/Timer.h>
 #include <JCQP/QpProblem.h>
 
@@ -45,16 +46,39 @@ qpOASES::real_t* ub_qpoases;
 qpOASES::real_t* q_soln;
 
 qpOASES::real_t* H_red;
+qpOASES::real_t* H_red_alt;
 qpOASES::real_t* g_red;
 qpOASES::real_t* A_red;
+qpOASES::real_t* A_red_alt;
 qpOASES::real_t* lb_red;
 qpOASES::real_t* ub_red;
 qpOASES::real_t* q_red;
 u8 real_allocated = 0;
 
+qpOASES::SQProblem* qpoases_solver = NULL;
+int qpoases_solver_vars = -1;
+int qpoases_solver_cons = -1;
+int qpoases_active_buffer = -1;
+bool qpoases_solver_initialized = false;
+std::vector<int> qpoases_var_map;
+std::vector<int> qpoases_con_map;
+unsigned long qpoases_solve_count = 0;
+int allocated_horizon = -1;
 
 char var_elim[2000];
 char con_elim[2000];
+
+void reset_qpoases_solver()
+{
+  delete qpoases_solver;
+  qpoases_solver = NULL;
+  qpoases_solver_vars = -1;
+  qpoases_solver_cons = -1;
+  qpoases_active_buffer = -1;
+  qpoases_solver_initialized = false;
+  qpoases_var_map.clear();
+  qpoases_con_map.clear();
+}
 
 mfp* get_q_soln()
 {
@@ -126,6 +150,13 @@ void c2qp(Matrix<fpt,13,13> Ac, Matrix<fpt,13,12> Bc,fpt dt,s16 horizon)
 
 void resize_qp_mats(s16 horizon)
 {
+  if(allocated_horizon == horizon)
+    return;
+
+  // SQProblem keeps shallow references to H/A, so destroy it before freeing
+  // the backing buffers when the horizon (and therefore dimensions) changes.
+  reset_qpoases_solver();
+
   int mcount = 0;
   int h2 = horizon*horizon;
 
@@ -180,8 +211,10 @@ void resize_qp_mats(s16 horizon)
     free(ub_qpoases);
     free(q_soln);
     free(H_red);
+    free(H_red_alt);
     free(g_red);
     free(A_red);
+    free(A_red_alt);
     free(lb_red);
     free(ub_red);
     free(q_red);
@@ -201,10 +234,12 @@ void resize_qp_mats(s16 horizon)
   mcount += 12*horizon;
 
   H_red = (qpOASES::real_t*)malloc(12*12*horizon*horizon*sizeof(qpOASES::real_t));
+  H_red_alt = (qpOASES::real_t*)malloc(12*12*horizon*horizon*sizeof(qpOASES::real_t));
   mcount += 12*12*h2;
   g_red = (qpOASES::real_t*)malloc(12*1*horizon*sizeof(qpOASES::real_t));
   mcount += 12*horizon;
   A_red = (qpOASES::real_t*)malloc(12*20*horizon*horizon*sizeof(qpOASES::real_t));
+  A_red_alt = (qpOASES::real_t*)malloc(12*20*horizon*horizon*sizeof(qpOASES::real_t));
   mcount += 12*20*h2;
   lb_red = (qpOASES::real_t*)malloc(20*1*horizon*sizeof(qpOASES::real_t));
   mcount += 20*horizon;
@@ -213,6 +248,7 @@ void resize_qp_mats(s16 horizon)
   q_red = (qpOASES::real_t*)malloc(12*horizon*sizeof(qpOASES::real_t));
   mcount += 12*horizon;
   real_allocated = 1;
+  allocated_horizon = horizon;
 
   //printf("malloc'd %d floating point numbers.\n",mcount);
 
@@ -432,9 +468,6 @@ void solve_mpc(update_data_t* update, problem_setup* setup)
     s16 num_variables = 12*setup->horizon;
 
 
-    qpOASES::int_t nWSR = 100;
-
-
     int new_vars = num_variables;
     int new_cons = num_constraints;
 
@@ -470,8 +503,8 @@ void solve_mpc(update_data_t* update, problem_setup* setup)
     //if(new_vars != num_variables)
     if(1==1)
     {
-      int var_ind[new_vars];
-      int con_ind[new_cons];
+      std::vector<int> var_ind(new_vars);
+      std::vector<int> con_ind(new_cons);
       int vc = 0;
       for(int i = 0; i < num_variables; i++)
       {
@@ -498,6 +531,18 @@ void solve_mpc(update_data_t* update, problem_setup* setup)
           vc++;
         }
       }
+      const bool same_mapping = qpoases_var_map == var_ind &&
+                                qpoases_con_map == con_ind;
+      const bool can_hotstart = qpoases_solver_initialized &&
+                                qpoases_solver_vars == new_vars &&
+                                qpoases_solver_cons == new_cons;
+
+      // SQProblem stores shallow H/A wrappers. Alternate backing buffers so
+      // hotstart can still read the previous QP while forming the new one.
+      const int write_buffer = (qpoases_active_buffer == 0) ? 1 : 0;
+      qpOASES::real_t* H_red_work = (write_buffer == 0) ? H_red : H_red_alt;
+      qpOASES::real_t* A_red_work = (write_buffer == 0) ? A_red : A_red_alt;
+
       for(int i = 0; i < new_vars; i++)
       {
         int olda = var_ind[i];
@@ -505,7 +550,7 @@ void solve_mpc(update_data_t* update, problem_setup* setup)
         for(int j = 0; j < new_vars; j++)
         {
           int oldb = var_ind[j];
-          H_red[i*new_vars + j] = H_qpoases[olda*num_variables + oldb];
+          H_red_work[i*new_vars + j] = H_qpoases[olda*num_variables + oldb];
         }
       }
 
@@ -514,7 +559,7 @@ void solve_mpc(update_data_t* update, problem_setup* setup)
         for(int st = 0; st < new_vars; st++)
         {
           float cval = A_qpoases[(num_variables*con_ind[con]) + var_ind[st] ];
-          A_red[con*new_vars + st] = cval;
+          A_red_work[con*new_vars + st] = cval;
         }
       }
       for(int i = 0; i < new_cons; i++)
@@ -526,21 +571,64 @@ void solve_mpc(update_data_t* update, problem_setup* setup)
 
       if(update->use_jcqp == 0) {
         Timer solve_timer;
-        qpOASES::QProblem problem_red (new_vars, new_cons);
         qpOASES::Options op;
         op.setToMPC();
         op.printLevel = qpOASES::PL_NONE;
-        problem_red.setOptions(op);
-        //int_t nWSR = 50000;
 
+        qpOASES::int_t nWSR = can_hotstart ? 40 : 100;
+        qpOASES::returnValue rval;
+        const char* solve_mode = can_hotstart ? (same_mapping ? "hot" : "hot-remap") : "cold";
+        bool fell_back = false;
 
-        int rval = problem_red.init(H_red, g_red, A_red, NULL, NULL, lb_red, ub_red, nWSR);
-        (void)rval;
-        int rval2 = problem_red.getPrimalSolution(q_red);
+        if(can_hotstart)
+        {
+          rval = qpoases_solver->hotstart(H_red_work, g_red, A_red_work,
+                                          NULL, NULL, lb_red, ub_red, nWSR);
+          if(rval != qpOASES::SUCCESSFUL_RETURN)
+          {
+            fell_back = true;
+            reset_qpoases_solver();
+            qpoases_solver = new qpOASES::SQProblem(new_vars, new_cons);
+            qpoases_solver->setOptions(op);
+            nWSR = 100;
+            rval = qpoases_solver->init(H_red_work, g_red, A_red_work,
+                                         NULL, NULL, lb_red, ub_red, nWSR);
+            solve_mode = "fallback-cold";
+          }
+        }
+        else
+        {
+          reset_qpoases_solver();
+          qpoases_solver = new qpOASES::SQProblem(new_vars, new_cons);
+          qpoases_solver->setOptions(op);
+          rval = qpoases_solver->init(H_red_work, g_red, A_red_work,
+                                       NULL, NULL, lb_red, ub_red, nWSR);
+        }
+
+        qpoases_solver_vars = new_vars;
+        qpoases_solver_cons = new_cons;
+        qpoases_active_buffer = write_buffer;
+        qpoases_solver_initialized = (rval == qpOASES::SUCCESSFUL_RETURN);
+        qpoases_var_map = var_ind;
+        qpoases_con_map = con_ind;
+
+        qpOASES::returnValue rval2 = qpoases_solver->getPrimalSolution(q_red);
+        ++qpoases_solve_count;
+        const double solve_ms = solve_timer.getMs();
+        if(qpoases_solve_count <= 5 || qpoases_solve_count % 100 == 0 ||
+           fell_back || rval != qpOASES::SUCCESSFUL_RETURN ||
+           rval2 != qpOASES::SUCCESSFUL_RETURN)
+        {
+          printf("[qpOASES] mode=%s status=%d primal=%d nWSR=%d "
+                 "time=%.3f ms size=%dx%d\n",
+                 solve_mode, (int)rval, (int)rval2, (int)nWSR,
+                 solve_ms, new_vars, new_cons);
+        }
         if(rval2 != qpOASES::SUCCESSFUL_RETURN)
-          printf("failed to solve!\n");
-
-        // printf("solve time: %.3f ms, size %d, %d\n", solve_timer.getMs(), new_vars, new_cons);
+        {
+          for(int i = 0; i < new_vars; i++)
+            q_red[i] = 0.0;
+        }
 
         vc = 0;
         for(int i = 0; i < num_variables; i++)
@@ -562,7 +650,7 @@ void solve_mpc(update_data_t* update, problem_setup* setup)
         int i = 0;
         for(int r = 0; r < new_cons; r++) {
           for(int c = 0; c < new_vars; c++) {
-            reducedProblem.A(r,c) = A_red[i++];
+            reducedProblem.A(r,c) = A_red_work[i++];
           }
         }
 
@@ -570,7 +658,7 @@ void solve_mpc(update_data_t* update, problem_setup* setup)
         i = 0;
         for(int r = 0; r < new_vars; r++) {
           for(int c = 0; c < new_vars; c++) {
-            reducedProblem.P(r,c) = H_red[i++];
+            reducedProblem.P(r,c) = H_red_work[i++];
           }
         }
 

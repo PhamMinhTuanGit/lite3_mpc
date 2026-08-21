@@ -31,9 +31,9 @@ private:
     std::atomic<bool>    has_first_calc_{false};
     static constexpr int64_t kCmpcDeadlineMs = 100; // Deadline 100ms cho mỗi chu kỳ tính torque
     std::mutex           data_mtx_;
-    // Bộ đệm quan sát: Run() (vòng FSM) ghi, thread nền đọc
+    // Bộ đệm quan sát: Run() (vòng FSM) ghi, thread nền đọc (q: 12, qd: 12, tau: 12)
     double imu_data_[10]   = {};
-    double motor_data_[24] = {};
+    double motor_data_[36] = {};
     // Chạy TorqueCalculator mỗi `kDecimation` lần Run() (1 = mỗi tick)
     static constexpr int kDecimation = 1;
 
@@ -74,8 +74,9 @@ private:
 
     // Reorder joints from ri_ptr_ [FL,FR,HL,HR] to GaitCtrller [FR,FL,HR,HL]
     void BuildMotorData(double* motorData) {
-        VecXf q  = ri_ptr_->GetJointPosition();
-        VecXf qd = ri_ptr_->GetJointVelocity();
+        VecXf q   = ri_ptr_->GetJointPosition();
+        VecXf qd  = ri_ptr_->GetJointVelocity();
+        VecXf tau = ri_ptr_->GetJointTorque();
 
         // GaitCtrller leg 0=FR, 1=FL, 2=HR, 3=HL
         // ri_ptr_ leg   0=FL, 1=FR, 2=HL, 3=HR   (each leg occupies 3 joints)
@@ -85,6 +86,7 @@ private:
             for (int j = 0; j < 3; j++) {
                 motorData[i * 3 + j]      = q(ri_leg * 3 + j);
                 motorData[12 + i * 3 + j] = qd(ri_leg * 3 + j);
+                motorData[24 + i * 3 + j] = tau(ri_leg * 3 + j);
             }
         }
     }
@@ -142,7 +144,7 @@ private:
             int cnt = state_run_cnt_.load();
             if (cnt >= 0 && cnt % kDecimation == 0 && cnt != run_cnt_record) {
                 // Lấy bản sao quan sát mới nhất (tránh đọc rách giữa lúc Run() ghi)
-                double imu[10], motor[24], effort[12] = {};
+                double imu[10], motor[36], effort[12] = {};
                 {
                     std::lock_guard<std::mutex> lk(data_mtx_);
                     std::memcpy(imu,   imu_data_,   sizeof(imu));

@@ -15,6 +15,9 @@ struct LegData {
   float qd_abad[4];
   float qd_hip[4];
   float qd_knee[4];
+  float tau_abad[4];
+  float tau_hip[4];
+  float tau_knee[4];
 };
 
 struct LegCommand {

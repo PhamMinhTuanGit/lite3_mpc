@@ -112,6 +112,11 @@ void LegController<T>::updateData(LegData *legData)
         datas[leg].qd(1) = legData->qd_hip[leg];
         datas[leg].qd(2) = legData->qd_knee[leg];
 
+        // tauEstimate 关节实际测量力矩
+        datas[leg].tauEstimate(0) = legData->tau_abad[leg];
+        datas[leg].tauEstimate(1) = legData->tau_hip[leg];
+        datas[leg].tauEstimate(2) = legData->tau_knee[leg];
+
         // J and p 雅可比和足端位置
         computeLegJacobianAndPosition<T>(_quadruped, datas[leg].q, &(datas[leg].J), &(datas[leg].p), leg);
 

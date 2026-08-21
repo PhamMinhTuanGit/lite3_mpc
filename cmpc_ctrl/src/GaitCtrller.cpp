@@ -65,6 +65,10 @@ void GaitCtrller::SetLegData(double *motorData)
         _legdata.qd_abad[i] = -motorData[12 + i * 3]; // especially for Lite3
         _legdata.qd_hip[i] = motorData[12 + i * 3 + 1];
         _legdata.qd_knee[i] = motorData[12 + i * 3 + 2];
+
+        _legdata.tau_abad[i] = -motorData[24 + i * 3]; // especially for Lite3
+        _legdata.tau_hip[i] = motorData[24 + i * 3 + 1];
+        _legdata.tau_knee[i] = motorData[24 + i * 3 + 2];
     }
 }
 

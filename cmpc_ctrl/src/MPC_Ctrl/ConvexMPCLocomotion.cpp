@@ -566,7 +566,7 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
     Vec4<float> contactStates = gait->getContactState();
     Vec4<float> swingStates = gait->getSwingState();
     int *mpcTable = gait->getMpcTable();
-    updateMPCIfNeeded(mpcTable, _stateEstimator, omniMode); // cứ 30 tick mới giải 1 lần (MPC -> QP)
+    updateMPCIfNeeded(mpcTable, _stateEstimator, _legController, omniMode); // cứ 30 tick mới giải 1 lần (MPC -> QP)
 
     //  StateEstimator* se = hw_i->state_estimator;
     Vec4<float> se_contactState(0, 0, 0, 0);
@@ -712,6 +712,7 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
 
 void ConvexMPCLocomotion::updateMPCIfNeeded(int *mpcTable,
                                             StateEstimatorContainer<float> &_stateEstimator,
+                                            LegController<float> &_legController,
                                             bool omniMode)
 {
     // iterationsBetweenMPC = 30;
@@ -809,13 +810,15 @@ void ConvexMPCLocomotion::updateMPCIfNeeded(int *mpcTable,
         }
         else
         {
-            solveDenseMPC(mpcTable, _stateEstimator);
+            solveDenseMPC(mpcTable, _stateEstimator, _legController);
         }
         // printf("TOTAL SOLVE TIME: %.3f\n", solveTimer.getMs());
     }
 }
 
-void ConvexMPCLocomotion::solveDenseMPC(int *mpcTable, StateEstimatorContainer<float> &_stateEstimator)
+void ConvexMPCLocomotion::solveDenseMPC(int *mpcTable,
+                                        StateEstimatorContainer<float> &_stateEstimator,
+                                        LegController<float> &_legController)
 {
     auto seResult = _stateEstimator.getResult();
 
@@ -835,20 +838,30 @@ void ConvexMPCLocomotion::solveDenseMPC(int *mpcTable, StateEstimatorContainer<f
     float *w = seResult.omegaWorld.data();
     float *q = seResult.orientation.data();
 
-    // ── Cập nhật bộ ước lượng trọng tâm & khối lượng trực tuyến (Combined CoM & Mass RLS) ──
+    // ── Cập nhật bộ ước lượng trọng tâm & khối lượng ──────────────────
     Eigen::Matrix<float, 3, 4> p_feet_body;
-    Eigen::Matrix<float, 3, 4> f_feet_body;
-    Eigen::Matrix<float, 3, 4> f_feet_world;
+    Eigen::Matrix<float, 3, 4> f_feet_mpc_body;
+    Eigen::Matrix<float, 3, 4> f_feet_actual_world;
     for (int i = 0; i < 4; i++)
     {
         p_feet_body.col(i) = seResult.rBody * (pFoot[i] - seResult.position);
-        f_feet_body.col(i) = seResult.rBody * Fr_des[i];
-        f_feet_world.col(i) = Fr_des[i];
+        f_feet_mpc_body.col(i) = seResult.rBody * Fr_des[i];
+
+        // Tính phản lực tiếp xúc thực tế từ mô-men động cơ đo được: f = (J^T)^-1 * (tau_meas - tau_fric)
+        Eigen::Vector3f f_act_body = CoMEstimator::computeFootForceFromJointTorque(
+            _legController.datas[i].J,
+            _legController.datas[i].tauEstimate,
+            _legController.datas[i].qd);
+        f_feet_actual_world.col(i) = seResult.rBody.transpose() * f_act_body;
     }
     Eigen::Matrix3f I_body = Eigen::Matrix3f::Zero();
     I_body.diagonal() << RobotConfig::IXX, RobotConfig::IYY, RobotConfig::IZZ;
 
-    _comEstimator.update(p_feet_body, f_feet_body, f_feet_world, seResult.omegaBody, seResult.aWorld[2], dtMPC, I_body, contact_state);
+    Eigen::Vector4f contact_state_vec;
+    contact_state_vec << (float)mpcTable[0], (float)mpcTable[1], (float)mpcTable[2], (float)mpcTable[3];
+
+    _comEstimator.update(p_feet_body, f_feet_mpc_body, f_feet_actual_world,
+                         seResult.omegaBody, dtMPC, I_body, contact_state_vec);
     Vec3<float> r_com_body = _comEstimator.getCoMOffset();
     Vec3<float> r_com_world = seResult.rBody.transpose() * r_com_body;
     float est_mass = _comEstimator.getEstimatedMass();
@@ -856,8 +869,9 @@ void ConvexMPCLocomotion::solveDenseMPC(int *mpcTable, StateEstimatorContainer<f
 
     if (iterationCounter % 100 == 0)
     {
-        printf("[CoM & Mass Estimator] CoM: x=%.3f m | y=%.3f m | z=%.3f m || Mass: %.2f kg\n",
-               r_com_body[0], r_com_body[1], r_com_body[2], est_mass);
+        printf("[CoM & Mass Estimator] CoM: x=%+.3f m | y=%+.3f m | z=%+.3f m || Mass: %.2f kg (raw: %.2f kg | Fz: %.1f N)\n",
+               r_com_body[0], r_com_body[1], r_com_body[2], est_mass,
+               _comEstimator.getEstimatedMassRaw(), _comEstimator.getTotalSupportForce());
     }
 
     // ── Code gốc (Original code):
