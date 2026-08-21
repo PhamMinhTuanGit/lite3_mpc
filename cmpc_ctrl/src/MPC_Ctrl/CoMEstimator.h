@@ -92,8 +92,8 @@ public:
         }
 
         // ── 3. ƯỚC LƯỢNG TỔNG KHỐI LƯỢNG (Mass Estimation) ──────────────
-        // Theo định luật 2 Newton theo trục đứng: Fz_world = m * (g + az_world)
-        // float eff_g = 9.81f + a_world_z;
+        // Theo định luật 2 Newton theo trục đứng: Fz_world = m * (g + az_world) = m * a_world_z
+        // Lưu ý: a_world_z từ IMU accelerometer trong seResult đã là proper acceleration (g + az_world).
         float eff_g = a_world_z;
         if (eff_g > 5.0f && F_total_world_z > 40.0f) {
             _mass_raw = F_total_world_z / eff_g;

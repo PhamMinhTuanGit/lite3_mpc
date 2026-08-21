@@ -80,16 +80,22 @@ void RetroidGamepadInterface::TransformRetroidToUserCommand(){
         if (!IsKeysEqual(rt_keys_, rt_keys_record_)) {
             switch (msfb_.current_state){
             case RobotMotionState::WaitingForStand:
-                if(rt_keys_.Y != rt_keys_record_.Y) {
+                if(rt_keys_.Y != rt_keys_record_.Y && rt_keys_.Y == 1) {
                     usr_cmd_.target_mode = int(RobotMotionState::StandingUp); 
                 }
                 break;
             case RobotMotionState::StandingUp:
-                if(rt_keys_.X != rt_keys_record_.X){
+                if(rt_keys_.X != rt_keys_record_.X && rt_keys_.X == 1){
                     usr_cmd_.target_mode = int(RobotMotionState::CMPC);
+                }
+                if(rt_keys_.B != rt_keys_record_.B && rt_keys_.B == 1){
+                    usr_cmd_.target_mode = int(RobotMotionState::SitDown);
                 }
                 break;
             case RobotMotionState::CMPC:
+                if(rt_keys_.B != rt_keys_record_.B && rt_keys_.B == 1){
+                    usr_cmd_.target_mode = int(RobotMotionState::SitDown);
+                }
                 break;
             
             default:

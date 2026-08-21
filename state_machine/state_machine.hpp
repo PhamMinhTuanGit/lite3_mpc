@@ -10,6 +10,10 @@
  */
 #pragma once
 
+#include <csignal>
+#include <atomic>
+#include <chrono>
+
 #include "state_base.h"
 #include "idle_state.hpp"
 #include "standup_state.hpp"
@@ -34,6 +38,13 @@
 #include "data_streaming.hpp"
 
 class StateMachine{
+public:
+    inline static std::atomic<bool> is_running_{true};
+    static void SignalHandler(int signum){
+        std::cout << "\n[StateMachine] Caught signal (" << signum << "), initiating safe shutdown..." << std::endl;
+        is_running_ = false;
+    }
+
 private:
     std::shared_ptr<StateBase> current_controller_;
     std::shared_ptr<StateBase> idle_controller_;
@@ -112,13 +123,11 @@ public:
         const std::string activation_key = "~/raisim/activation.raisim";
         std::string urdf_path = "";
         std::string mjcf_path = "";
-        // #ifdef BUILD_SIMULATION
-        //     uc_ptr_ = std::make_shared<KeyboardInterface>();
-        // #else
-        //     uc_ptr_ = std::make_shared<RetroidGamepadInterface>(12121);
-        // #endif
-        uc_ptr_ = std::make_shared<KeyboardInterface>();
-        // uc_ptr_ = std::make_shared<RetroidGamepadInterface>(12121);
+        #ifdef BUILD_SIMULATION
+            uc_ptr_ = std::make_shared<KeyboardInterface>();
+        #else
+            uc_ptr_ = std::make_shared<RetroidGamepadInterface>(12121);
+        #endif
         if(robot_type == RobotType::Lite3){
             urdf_path = GetAbsPath()+"/../third_party/URDF_model/lite3_urdf/Lite3/urdf/Lite3.urdf";
             mjcf_path = GetAbsPath()+"third_party/URDF_model/Lite3/Lite3_mjcf/mjcf/Lite3.xml";
@@ -159,8 +168,10 @@ public:
         current_state_name_ = kIdle;
         next_state_name_ = kIdle;
 
-        // std::cout << "Controller will be enabled in 3 seconds!!!" << std::endl;
-        // std::this_thread::sleep_for(std::chrono::seconds(3)); //for safety
+        // Đăng ký bắt tín hiệu ngắt an toàn (Ctrl+C / kill)
+        is_running_ = true;
+        std::signal(SIGINT, StateMachine::SignalHandler);
+        std::signal(SIGTERM, StateMachine::SignalHandler);
 
         ri_ptr_->Start();
         std::cout << "Robot interface started" << std::endl;
@@ -168,14 +179,26 @@ public:
 
         current_controller_->OnEnter();
     }
-    ~StateMachine(){}
+    ~StateMachine(){
+        if (is_running_) {
+            is_running_ = false;
+        }
+    }
 
     void Run(){
         int cnt = 0;
         static double time_record = 0;
-        while(true){
-            if(ri_ptr_->GetInterfaceTimeStamp()!= time_record){
-                time_record = ri_ptr_->GetInterfaceTimeStamp();
+        auto last_packet_time = std::chrono::steady_clock::now();
+        constexpr double kSensorTimeoutSec = 0.05; // 50ms watchdog timeout cho kết nối cảm biến
+        bool sensor_timeout_warned = false;
+
+        while(is_running_){
+            double current_timestamp = ri_ptr_->GetInterfaceTimeStamp();
+            if(current_timestamp != time_record){
+                time_record = current_timestamp;
+                last_packet_time = std::chrono::steady_clock::now();
+                sensor_timeout_warned = false;
+
                 current_controller_ -> Run();
 
                 if(current_controller_->LoseControlJudge()) next_state_name_ = StateName::kJointDamping;
@@ -191,12 +214,44 @@ public:
                 }
                 ++cnt;
                 this->GetDataStreaming();
+            } else {
+                // Kiểm tra timeout mất gói tin cảm biến / thread phần cứng bị treo
+                auto elapsed_sec = std::chrono::duration<double>(
+                    std::chrono::steady_clock::now() - last_packet_time).count();
+                if (elapsed_sec > kSensorTimeoutSec) {
+                    if (!sensor_timeout_warned) {
+                        std::cerr << "[CRITICAL WATCHDOG] Sensor communication lost for "
+                                  << elapsed_sec * 1000.0 << " ms! Emergency switching to Joint Damping..." << std::endl;
+                        sensor_timeout_warned = true;
+                    }
+                    if (current_state_name_ != StateName::kJointDamping) {
+                        current_controller_->OnExit();
+                        current_controller_ = joint_damping_controller_;
+                        std::cout << "[WATCHDOG] Forced transition to: " << current_controller_->state_name_ << std::endl;
+                        current_controller_->OnEnter();
+                        current_state_name_ = StateName::kJointDamping;
+                    }
+                    // Gửi lệnh damping trực tiếp xuống robot
+                    if (joint_damping_controller_) {
+                        joint_damping_controller_->Run();
+                    }
+                }
             }
             std::this_thread::sleep_for(std::chrono::microseconds(500));
         }
 
-        uc_ptr_->Stop();
-        ri_ptr_->Stop();
+        std::cout << "[StateMachine] Exiting control loop..." << std::endl;
+        if (current_controller_) {
+            current_controller_->OnExit();
+        }
+        if (joint_damping_controller_ && ri_ptr_) {
+            std::cout << "[StateMachine] Applying joint damping before stop..." << std::endl;
+            joint_damping_controller_->Run();
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        if (uc_ptr_) uc_ptr_->Stop();
+        if (ri_ptr_) ri_ptr_->Stop();
+        std::cout << "[StateMachine] Robot interface stopped safely." << std::endl;
     }
 
 };

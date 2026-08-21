@@ -652,8 +652,10 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
             {
                 _legController.commands[foot].pDes = pDesLeg;
                 _legController.commands[foot].vDes = vDesLeg;
+                Mat3<float> Kp_trot_stance = Mat3<float>::Zero();
+                Kp_trot_stance(2, 2) = 80.0f;
                 _legController.commands[foot].kpCartesian =
-                    standingNow ? Kp_stance : Mat3<float>::Zero();
+                    standingNow ? Kp_stance : Kp_trot_stance;
 
                 if (foot == 1 || foot == 3)
                 {

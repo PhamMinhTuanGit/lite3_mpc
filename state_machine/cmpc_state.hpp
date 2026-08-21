@@ -10,6 +10,8 @@
 #include <mutex>
 #include <atomic>
 #include <cstring>
+#include <chrono>
+#include <iostream>
 
 #include "state_base.h"
 #include "cmpc_bridge.h"
@@ -22,10 +24,13 @@ private:
     double time_stamp_record_ = 0.0;
 
     // ── Worker thread (giống PolicyRunner trong rl_control_state) ──────────
-    std::thread       cmpc_thread_;
-    std::atomic<bool> start_flag_{false};
-    std::atomic<int>  state_run_cnt_{-1};
-    std::mutex        data_mtx_;
+    std::thread          cmpc_thread_;
+    std::atomic<bool>    start_flag_{false};
+    std::atomic<int>     state_run_cnt_{-1};
+    std::atomic<int64_t> last_calc_time_ms_{0};
+    std::atomic<bool>    has_first_calc_{false};
+    static constexpr int64_t kCmpcDeadlineMs = 100; // Deadline 100ms cho mỗi chu kỳ tính torque
+    std::mutex           data_mtx_;
     // Bộ đệm quan sát: Run() (vòng FSM) ghi, thread nền đọc
     double imu_data_[10]   = {};
     double motor_data_[24] = {};
@@ -84,17 +89,39 @@ private:
         }
     }
 
+    // ── Alpha Blending khi chuyển từ StandUpState sang CMPCState ─────────
+    VecXf                                 init_stand_joint_pos_;
+    VecXf                                 stand_kp_, stand_kd_;
+    double                                blend_start_time_ = 0.0;
+    std::chrono::steady_clock::time_point blend_start_steady_time_;
+    static constexpr float                kBlendDuration = 0.5f; // Thời gian hòa trộn lực 0.5s
+
     // Map effort[12] from GaitCtrller [FR,FL,HR,HL] → joint_cmd_ [FL,FR,HL,HR]
     void ApplyEffort(const double* effort) {
         joint_cmd_.setZero();
+
+        // Tính hệ số alpha blend từ 0.0 (100% Joint PD) -> 1.0 (100% MPC Torque)
+        float elapsed_sim  = static_cast<float>(ri_ptr_->GetInterfaceTimeStamp() - blend_start_time_);
+        float elapsed_wall = std::chrono::duration<float>(std::chrono::steady_clock::now() - blend_start_steady_time_).count();
+        float elapsed      = (elapsed_sim > 0.0f) ? elapsed_sim : elapsed_wall;
+        float alpha        = std::max(0.0f, std::min(1.0f, elapsed / kBlendDuration));
+
         const int ri_order[4] = {1, 0, 3, 2};
         for (int i = 0; i < 4; i++) {
             int ri_leg = ri_order[i];
             for (int j = 0; j < 3; j++) {
-                joint_cmd_(ri_leg * 3 + j, 4) = static_cast<float>(effort[i * 3 + j]);
+                int joint_idx = ri_leg * 3 + j;
+                int cmpc_idx  = i * 3 + j;
+
+                // Alpha blending: Giảm dần Joint PD từ StandUp và tăng dần Mô-men từ MPC
+                joint_cmd_(joint_idx, 0) = (1.0f - alpha) * stand_kp_(joint_idx); // Kp
+                joint_cmd_(joint_idx, 1) = init_stand_joint_pos_(joint_idx);       // q_des
+                joint_cmd_(joint_idx, 2) = std::max(1.0f, (1.0f - alpha)) * stand_kd_(joint_idx); // Kd
+                joint_cmd_(joint_idx, 3) = 0.0f;                                   // qd_des
+                joint_cmd_(joint_idx, 4) = alpha * static_cast<float>(effort[cmpc_idx]); // tau_ff
             }
         }
-        ri_ptr_->SetJointCommand(joint_cmd_);  // gửi full torque (ko phân ra swing(position) và stance (torque))
+        ri_ptr_->SetJointCommand(joint_cmd_);
     }
 
     void UpdateVelocityCommand() {
@@ -123,6 +150,12 @@ private:
                 }
                 gait_ctrl_->TorqueCalculator(imu, motor, effort);
                 ApplyEffort(effort);
+
+                auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+                last_calc_time_ms_.store(now_ms);
+                has_first_calc_.store(true);
+
                 run_cnt_record = cnt;
             }
             std::this_thread::sleep_for(std::chrono::microseconds(100));
@@ -132,7 +165,11 @@ private:
 public:
     CMPCState(const RobotType& robot_type, const std::string& state_name,
               std::shared_ptr<ControllerData> data_ptr)
-        : StateBase(robot_type, state_name, data_ptr) {}
+        : StateBase(robot_type, state_name, data_ptr) {
+        init_stand_joint_pos_ = VecXf::Zero(12);
+        stand_kp_ = cp_ptr_->swing_leg_kp_.replicate(4, 1);
+        stand_kd_ = cp_ptr_->swing_leg_kd_.replicate(4, 1);
+    }
     ~CMPCState() {}
 
     virtual void OnEnter() override {
@@ -142,6 +179,13 @@ public:
         run_time_ = ri_ptr_->GetInterfaceTimeStamp();
         time_stamp_record_ = run_time_;
 
+        // Khởi tạo Alpha Blending với góc khớp và gain giữ từ StandUpState
+        init_stand_joint_pos_     = ri_ptr_->GetJointPosition();
+        stand_kp_                 = cp_ptr_->swing_leg_kp_.replicate(4, 1);
+        stand_kd_                 = cp_ptr_->swing_leg_kd_.replicate(4, 1);
+        blend_start_time_         = run_time_;
+        blend_start_steady_time_  = std::chrono::steady_clock::now();
+
         double pidParam[4] = {kStandKp, kStandKd, kJointKp, kJointKd};
         gait_ctrl_ = std::make_unique<CMPCBridge>(freq, pidParam);
         gait_ctrl_->SetGaitType(0);   // 0 = trot
@@ -149,6 +193,9 @@ public:
         gait_ctrl_->SetRobotMode(0);  // 0 = follow user velocity command
 
         // Khởi động thread nền SAU khi gait_ctrl_ đã sẵn sàng
+        has_first_calc_.store(false);
+        last_calc_time_ms_.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
         state_run_cnt_ = -1;
         start_flag_    = true;
         cmpc_thread_   = std::thread(std::bind(&CMPCState::CmpcRunner, this));
@@ -158,6 +205,7 @@ public:
         start_flag_ = false;
         if (cmpc_thread_.joinable()) cmpc_thread_.join();
         state_run_cnt_ = -1;
+        has_first_calc_.store(false);
         gait_ctrl_.reset();
     }
 
@@ -180,8 +228,20 @@ public:
             return true;
         Vec3f rpy = ri_ptr_->GetImuRpy();
         if (fabs(rpy(0)) > 25. / 180 * M_PI || fabs(rpy(1)) > 30. / 180 * M_PI) {
-            std::cout << "posture value: " << 180. / M_PI * rpy.transpose() << std::endl;
+            std::cout << "[CMPC Safety] Posture limit exceeded: " << 180. / M_PI * rpy.transpose() << std::endl;
             return true;
+        }
+
+        // Kiểm tra deadline / timeout cho CMPC worker thread
+        if (has_first_calc_.load()) {
+            auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            int64_t elapsed_ms = now_ms - last_calc_time_ms_.load();
+            if (elapsed_ms > kCmpcDeadlineMs) {
+                std::cerr << "[CMPC Safety] CMPC worker thread missed deadline ("
+                          << elapsed_ms << " ms > " << kCmpcDeadlineMs << " ms)! Switching to damping..." << std::endl;
+                return true;
+            }
         }
         return false;
     }
