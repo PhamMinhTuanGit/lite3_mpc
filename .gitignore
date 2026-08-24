@@ -74,3 +74,4 @@ tmp/
 .codegraph/
 */qpOASES/*
 */osqp/*
+tests/pinocchio_smoke_debug
