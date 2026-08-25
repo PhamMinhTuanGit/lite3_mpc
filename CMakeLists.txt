@@ -119,6 +119,7 @@ set(CMPC_SRCS
   cmpc_ctrl/src/Controllers/SafetyChecker.cpp
   cmpc_ctrl/src/Dynamics/FloatingBaseModel.cpp
   cmpc_ctrl/src/Dynamics/Quadruped.cpp
+  cmpc_ctrl/src/Pinocchio_Dynamics/Lite3DynamicModel.cpp
   cmpc_ctrl/src/MPC_Ctrl/ConvexMPCLocomotion.cpp
   cmpc_ctrl/src/MPC_Ctrl/Gait.cpp
   cmpc_ctrl/src/MPC_Ctrl/SparseCMPC.cpp
@@ -191,11 +192,14 @@ target_link_libraries(cmpc_deploy JCQP qpOASES osqpstatic)
 # JCQP, osqp, qpOASES headers: only to cmpc_deploy to avoid JCQP/types.h shadowing
 # osqp's types.h when compiling osqp's C files.
 target_include_directories(cmpc_deploy PRIVATE
+  ${THIRD_PARTY}
+  ${THIRD_PARTY}/boost
   cmpc_ctrl/src/JCQP
   cmpc_ctrl/src/JCQP/amd/include
   cmpc_ctrl/src/osqp/include
   cmpc_ctrl/src/qpOASES/include
   cmpc_ctrl/src/Utilities
+  cmpc_ctrl/src/Pinocchio_Dynamics/include
 )
 
 # if (USE_ONNX)
