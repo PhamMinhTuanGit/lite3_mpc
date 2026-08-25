@@ -111,6 +111,17 @@ public:
 
   Vec4<float> contact_state;
 
+  void setContactEvidence(const float fz_gmo[4], const bool valid[4]) {
+    for (int i = 0; i < 4; ++i) {
+      _fz_gmo[i] = fz_gmo[i];
+      _gmo_valid[i] = valid[i];
+    }
+  }
+
+  uint8_t getGmoContactBinary(int leg) const { return _contact_state_gmo[leg] ? 1 : 0; }
+  float getLostContactTimeMs(int leg) const { return _lost_contact_time_ms[leg]; }
+  float getStanceForceScale(int leg) const { return _stance_force_scale[leg]; }
+
   float getDesVx() const { return _x_vel_des; }
   float getDesVy() const { return _y_vel_des; }
   float getDesYawRate() const { return _yaw_turn_rate; }
@@ -183,7 +194,13 @@ private:
   SparseCMPC _sparseCMPC;
   CoMEstimator _comEstimator;
 
-};
+  float _fz_gmo[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  bool _gmo_valid[4] = {false, false, false, false};
+  bool _contact_state_gmo[4] = {true, true, true, true};
+  bool _had_contact_in_stance[4] = {false, false, false, false};
+  float _lost_contact_time_ms[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  float _stance_force_scale[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 
+};
 
 #endif //CHEETAH_SOFTWARE_CONVEXMPCLOCOMOTION_H

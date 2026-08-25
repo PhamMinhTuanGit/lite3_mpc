@@ -72,6 +72,13 @@ struct CmpcTelemetryData {
     float t_evidence_p99_ms;
     float t_mpc_ms;
     float t_total_ms;
+
+    // 8. Contact State Machine & AbAd Diagnostic (FR, FL, HR, HL)
+    uint8_t gmo_contact_binary[4];
+    float lost_contact_time_ms[4];
+    float stance_force_scale[4];
+    float q_abad[4];
+    float tau_abad_cmd[4];
 };
 
 #endif // CMPC_TELEMETRY_H

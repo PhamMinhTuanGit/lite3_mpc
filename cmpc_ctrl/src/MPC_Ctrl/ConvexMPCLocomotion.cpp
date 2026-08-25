@@ -574,7 +574,6 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
     iterationCounter++; // +1 mỗi tick (1 kHz)
 
     // load LCM leg swing gains
-    // Kp << 700, 0, 0, 0, 700, 0, 0, 0, 50;
     Kp << 700, 0, 0, 0, 700, 0, 0, 0, 200;
     // Use a conservative Y-only anchor. At the 3 cm error limit this produces
     // at most 2.4 N per foot; vertical support remains entirely with MPC.
@@ -584,15 +583,11 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
     Kp_stance *= standingStiffnessRamp;
 
     Kd << 10, 0, 0, 0, 10, 0, 0, 0, 10;
-    // Kd_stance = 1.0 * Kd;
-    // Kp_stance << 0,  0,   0,
-    //              0,  0,   0,
-    //              0,  0, 80.0;  // Bắt đầu thử từ 50.0 đến 100.0 N/m
 
-    // // Kd cho Stance:
-    Kd_stance << 10.0,    0,    0,
-                    0, 10.0,    0,
-                    0,    0, 10.0;
+    // Kd cho Stance:
+    Kd_stance << 10.0, 0, 0,
+                 0, 10.0, 0,
+                 0, 0, 10.0;
 
     // gait
     Vec4<float> contactStates = gait->getContactState();
@@ -607,11 +602,33 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
 
     for (int foot = 0; foot < 4; foot++)
     {
+        // ── Contact Hysteresis from GMO Evidence ──────────────────────────────
+        if (_gmo_valid[foot])
+        {
+            if (_fz_gmo[foot] > 15.0f)
+            {
+                _contact_state_gmo[foot] = true;
+            }
+            else if (_fz_gmo[foot] < 8.0f)
+            {
+                _contact_state_gmo[foot] = false;
+            }
+        }
+        else
+        {
+            // Fallback to scheduled stance when GMO is not ready or invalid
+            _contact_state_gmo[foot] = true;
+        }
+
         float contactState = contactStates[foot];
         float swingState = swingStates[foot];
 
         if (swingState > 0) // foot is in swing
         {
+            _had_contact_in_stance[foot] = false;
+            _lost_contact_time_ms[foot] = 0.0f;
+            _stance_force_scale[foot] = 1.0f;
+
             if (firstSwing[foot])
             {
                 firstSwing[foot] = false;
@@ -685,9 +702,6 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
                 _legController.commands[foot].pDes = pDesLeg;
                 _legController.commands[foot].vDes = vDesLeg;
                 Mat3<float> Kp_trot_stance = Mat3<float>::Zero();
-                Kp_trot_stance(0, 0) = 40.0f;
-                Kp_trot_stance(1, 1) = 40.0f;
-                Kp_trot_stance(2, 2) = 80.0f;
                 _legController.commands[foot].kpCartesian =
                     standingNow ? Kp_stance : Kp_trot_stance;
 
@@ -700,7 +714,46 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
                     _legController.commands[foot].kdCartesian = 1 * Kd_stance;
                 }
 
-                _legController.commands[foot].forceFeedForward = f_ff[foot];
+                // ── Contact-Aware Stance Force Modulator ───────────────────────
+                if (standingNow || !_gmo_valid[foot])
+                {
+                    _had_contact_in_stance[foot] = true;
+                    _lost_contact_time_ms[foot] = 0.0f;
+                    _stance_force_scale[foot] = 1.0f;
+                }
+                else if (_contact_state_gmo[foot])
+                {
+                    // 1. Contact good: mark contact established, reset timer and ramp force scale back to 1.0
+                    _had_contact_in_stance[foot] = true;
+                    _lost_contact_time_ms[foot] = 0.0f;
+                    _stance_force_scale[foot] = fminf(1.0f, _stance_force_scale[foot] + dt / 0.005f);
+                }
+                else
+                {
+                    // Contact OFF:
+                    if (!_had_contact_in_stance[foot])
+                    {
+                        // Early stance touchdown descent: maintain full force ready for impact
+                        _lost_contact_time_ms[foot] = 0.0f;
+                        _stance_force_scale[foot] = 1.0f;
+                    }
+                    else
+                    {
+                        // Lost contact AFTER initial touchdown (Air-Stance):
+                        _lost_contact_time_ms[foot] += dt * 1000.0f; // ms
+                        if (_lost_contact_time_ms[foot] < 15.0f)
+                        {
+                            // 2. Lost contact < 15 ms: keep force to avoid false triggers
+                        }
+                        else
+                        {
+                            // 3. Persistent lost contact >= 15 ms: ramp forceFeedForward to 0 over 15 ms
+                            _stance_force_scale[foot] = fmaxf(0.0f, _stance_force_scale[foot] - dt / 0.015f);
+                        }
+                    }
+                }
+
+                _legController.commands[foot].forceFeedForward = f_ff[foot] * _stance_force_scale[foot];
                 _legController.commands[foot].kdJoint = Mat3<float>::Identity() * 0.2;
             }
             else

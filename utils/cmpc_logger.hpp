@@ -103,6 +103,11 @@ public:
             for (int axis = 0; axis < 3; ++axis)
                 log_file_ << "gt_force_" << legs[leg] << '_' << axes[axis] << ',';
         }
+        for (int leg = 0; leg < 4; ++leg) log_file_ << "gmo_contact_binary_" << legs[leg] << ',';
+        for (int leg = 0; leg < 4; ++leg) log_file_ << "lost_contact_time_ms_" << legs[leg] << ',';
+        for (int leg = 0; leg < 4; ++leg) log_file_ << "stance_force_scale_" << legs[leg] << ',';
+        for (int leg = 0; leg < 4; ++leg) log_file_ << "q_abad_" << legs[leg] << ',';
+        for (int leg = 0; leg < 4; ++leg) log_file_ << "tau_abad_cmd_" << legs[leg] << ',';
         log_file_ << "t_est_ms,t_gmo_ms,t_grf_ms,t_evidence_p99_ms,"
                   << "t_mpc_ms,t_total_ms\n";
     }
@@ -154,6 +159,11 @@ public:
             line << telem.gt_contact[leg] << ',';
             for (float value : telem.gt_force_world[leg]) line << value << ',';
         }
+        for (int leg = 0; leg < 4; ++leg) line << static_cast<int>(telem.gmo_contact_binary[leg]) << ',';
+        for (int leg = 0; leg < 4; ++leg) line << telem.lost_contact_time_ms[leg] << ',';
+        for (int leg = 0; leg < 4; ++leg) line << telem.stance_force_scale[leg] << ',';
+        for (int leg = 0; leg < 4; ++leg) line << telem.q_abad[leg] << ',';
+        for (int leg = 0; leg < 4; ++leg) line << telem.tau_abad_cmd[leg] << ',';
         line << telem.t_est_ms << ',' << telem.t_gmo_ms << ','
              << telem.t_grf_ms << ',' << telem.t_evidence_p99_ms << ','
              << telem.t_mpc_ms << ','

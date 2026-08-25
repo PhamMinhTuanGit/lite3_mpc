@@ -252,6 +252,15 @@ void GaitCtrller::TorqueCalculator(double *imuData, double *motorData, double *e
         std::cout << "broken: Joint Limit Safety Check FAIL" << std::endl;
     }
 
+    float fz_gmo[4];
+    bool gmo_valid[4];
+    for (int i = 0; i < 4; ++i)
+    {
+        fz_gmo[i] = (float)_grfResult.force_world[i].z();
+        gmo_valid[i] = _grfResult.ready && (_grfResult.leg_valid[i] != 0);
+    }
+    convexMPC->setContactEvidence(fz_gmo, gmo_valid);
+
     Timer t_mpc;
     convexMPC->run(_quadruped,
                    *_legController,
@@ -347,6 +356,11 @@ void GaitCtrller::TorqueCalculator(double *imuData, double *motorData, double *e
             telem->gmo_fz[leg] =
                 static_cast<float>(_grfResult.force_world[leg].z());
             telem->scheduled_contact[leg] = convexMPC->contact_state[leg];
+            telem->gmo_contact_binary[leg] = convexMPC->getGmoContactBinary(leg);
+            telem->lost_contact_time_ms[leg] = convexMPC->getLostContactTimeMs(leg);
+            telem->stance_force_scale[leg] = convexMPC->getStanceForceScale(leg);
+            telem->q_abad[leg] = static_cast<float>(_legdata.q_abad[leg]);
+            telem->tau_abad_cmd[leg] = static_cast<float>(legcommand.tau_abad_ff[leg]);
         }
 
         telem->t_est_ms = (float)t_est_ms;
