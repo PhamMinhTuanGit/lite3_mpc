@@ -4,7 +4,7 @@
 #include <math.h>
 #include <sys/time.h>
 #include <unistd.h>
-#include <eigen3/Eigen/Core>
+#include <Eigen/Core>
 #include <iostream>
 #include <vector>
 

@@ -1,7 +1,7 @@
 #ifndef _RobotState
 #define _RobotState
 
-#include <eigen3/Eigen/Dense>
+#include <Eigen/Dense>
 #include "Utilities/common_types.h"
 #include "RobotConfig.h"
 

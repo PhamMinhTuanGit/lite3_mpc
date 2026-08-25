@@ -9,6 +9,9 @@ struct JointEff { double eff[12]; };
 
 extern "C" {
     void init_controller(double freq, double pidParam[]);
+    void init_controller_with_gmo(
+        double freq, double pidParam[], int enabled, double gain,
+        double forceDamping);
     void set_gait_type(int gaitType);
     void set_robot_mode(int mode);
     void set_robot_vel(double vel[]);
@@ -16,8 +19,13 @@ extern "C" {
     JointEff* torque_calculator_with_telem(double imuData[], double motorData[], CmpcTelemetryData* telem);
 }
 
-CMPCBridge::CMPCBridge(double freq, double* pidParam4) {
-    init_controller(freq, pidParam4);
+CMPCBridge::CMPCBridge(
+    double freq,
+    double* pidParam4,
+    const GMOConfig& gmoConfig) {
+    init_controller_with_gmo(
+        freq, pidParam4, gmoConfig.enabled ? 1 : 0,
+        gmoConfig.gain, gmoConfig.force_damping);
 }
 
 CMPCBridge::~CMPCBridge() = default;

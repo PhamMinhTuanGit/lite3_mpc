@@ -1,7 +1,10 @@
 #include "GaitCtrller.h"
 #include "Utilities/Timer.h"
 
-GaitCtrller::GaitCtrller(double freq, double *PIDParam)
+GaitCtrller::GaitCtrller(
+    double freq,
+    double *PIDParam,
+    const GMOConfig& gmoConfig)
     : _quadruped{buildMiniCheetah<float>()}, _model{_quadruped.buildModel()},        // original (no payload)
 	    // : _quadruped{buildMiniCheetahWithPayload<float>()}, _model{_quadruped.buildModel()}, // with 2 kg payload
       // iterationsBetweenMPC = 28: chu kỳ bước ~0.784s (stance=swing~0.392s),
@@ -14,8 +17,13 @@ GaitCtrller::GaitCtrller(double freq, double *PIDParam)
                                                                        &_stateEstimate,
                                                                        controlParameters.get())},
       _desiredStateCommand{std::make_unique<DesiredStateCommand<float>>(1.0 / freq)},
-      safetyChecker{std::make_unique<SafetyChecker<float>>()}
+      safetyChecker{std::make_unique<SafetyChecker<float>>()},
+      _gmoConfig{gmoConfig}
 {
+    _gmo = std::make_unique<GeneralizedMomentumObserver>(
+        _pinocchioDynamics, 1.0 / freq, _gmoConfig);
+    _grfEstimator = std::make_unique<GroundReactionForceEstimator>(
+        _pinocchioDynamics, _gmoConfig.force_damping);
     for (int i = 0; i < 4; i++)
     {
         ctrlParam(i) = PIDParam[i];
@@ -130,6 +138,52 @@ void GaitCtrller::TorqueCalculator(double *imuData, double *motorData, double *e
     PreWork(imuData, motorData);
     double t_est_ms = t_est.getMs(); // state estimation + leg data update
 
+    double t_gmo_ms = 0.0;
+    double t_grf_ms = 0.0;
+    if (_gmoConfig.enabled)
+    {
+        try
+        {
+            const Lite3StateMapStatus map_status = _stateMapper.map(
+                _stateEstimator->getResult(), _legController->datas,
+                _pinocchioDynamics, _mappedState);
+            if (map_status == Lite3StateMapStatus::Ok)
+            {
+                Timer t_gmo;
+                _gmoResult = _gmo->update(
+                    _mappedState.q, _mappedState.v, _mappedState.motor_torque);
+                t_gmo_ms = t_gmo.getMs();
+
+                if (_gmoResult.valid)
+                {
+                    Timer t_grf;
+                    _grfResult = _grfEstimator->update(
+                        _mappedState.q, _gmoResult.residual);
+                    t_grf_ms = t_grf.getMs();
+                }
+                else
+                {
+                    _grfEstimator->reset();
+                    _grfResult = GRFResult{};
+                }
+            }
+            else
+            {
+                _gmo->reset();
+                _grfEstimator->reset();
+                _gmoResult = GMOResult{};
+                _grfResult = GRFResult{};
+            }
+        }
+        catch (const std::exception&)
+        {
+            _gmo->reset();
+            _grfEstimator->reset();
+            _gmoResult = GMOResult{};
+            _grfResult = GRFResult{};
+        }
+    }
+
     // Setup the leg controller for a new iteration
     _legController->zeroCommand();
     _legController->setEnabled(true);
@@ -219,7 +273,31 @@ void GaitCtrller::TorqueCalculator(double *imuData, double *motorData, double *e
             }
         }
 
+        telem->gmo_valid = static_cast<uint8_t>(_gmoResult.valid);
+        telem->gmo_initialized = static_cast<uint8_t>(_gmoResult.initialized);
+        for (int i = 0; i < Lite3Dynamics::kNv; ++i)
+        {
+            telem->gmo_momentum[i] = static_cast<float>(_gmoResult.momentum[i]);
+            telem->gmo_momentum_hat[i] =
+                static_cast<float>(_gmoResult.momentum_hat[i]);
+            telem->gmo_residual[i] = static_cast<float>(_gmoResult.residual[i]);
+        }
+        for (int leg = 0; leg < Lite3Dynamics::kNumLegs; ++leg)
+        {
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                telem->gmo_force_world[leg][axis] =
+                    static_cast<float>(_grfResult.force_world[leg][axis]);
+            }
+            telem->gmo_force_norm[leg] =
+                static_cast<float>(_grfResult.force_world[leg].norm());
+            telem->gmo_fz[leg] =
+                static_cast<float>(_grfResult.force_world[leg].z());
+        }
+
         telem->t_est_ms = (float)t_est_ms;
+        telem->t_gmo_ms = (float)t_gmo_ms;
+        telem->t_grf_ms = (float)t_grf_ms;
         telem->t_mpc_ms = (float)t_mpc_ms;
         telem->t_total_ms = (float)t_total_ms;
     }

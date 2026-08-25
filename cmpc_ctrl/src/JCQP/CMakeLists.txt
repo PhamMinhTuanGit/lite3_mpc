@@ -1,5 +1,11 @@
-include_directories(amd/include)
-add_library(JCQP SHARED
+include_directories(
+  amd/include
+  ${THIRD_PARTY}/Lite3_MotionSDK/lib
+  ${THIRD_PARTY}/eigen
+  /usr/include/eigen3
+  /usr/include
+)
+add_library(JCQP STATIC
         QpProblem.cpp
         ProblemGenerator.cpp
         eigenvalues.cpp

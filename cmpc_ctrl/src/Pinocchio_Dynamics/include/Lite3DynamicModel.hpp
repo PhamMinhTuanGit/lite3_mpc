@@ -41,6 +41,12 @@ public:
         Knee = 2
     };
 
+    using Configuration = Eigen::Matrix<double, kNq, 1>;
+    using Velocity = Eigen::Matrix<double, kNv, 1>;
+    using MassMatrix = Eigen::Matrix<double, kNv, kNv>;
+    using FootJacobian = Eigen::Matrix<double, 3, kNv>;
+    using FootJacobianArray = std::array<FootJacobian, kNumLegs>;
+
     Lite3Dynamics();
 
     const pinocchio::Model& model() const noexcept { return model_; }
@@ -61,6 +67,19 @@ public:
     /** Compute generalized gravity forces g(q). */
     const Eigen::VectorXd& computeGravity(const Eigen::VectorXd& q);
 
+    /** Compute the Coriolis matrix satisfying h(q,v) = C(q,v)v + g(q). */
+    const Eigen::MatrixXd& computeCoriolisMatrix(
+        const Eigen::VectorXd& q,
+        const Eigen::VectorXd& v);
+
+    /** Compute one world-aligned translational foot Jacobian. */
+    const FootJacobian& computeFootJacobian(
+        Leg leg,
+        const Eigen::VectorXd& q);
+
+    /** Compute all foot Jacobians with one joint-kinematics pass. */
+    const FootJacobianArray& computeFootJacobians(const Eigen::VectorXd& q);
+
     /** Construct the fixed Lite3 model from the canonical URDF parameters. */
     static pinocchio::Model buildLite3Model();
 
@@ -75,4 +94,5 @@ private:
     std::array<pinocchio::FrameIndex, kNumLegs> foot_ids_{};
     std::array<std::array<pinocchio::JointIndex, kJointsPerLeg>, kNumLegs>
         joint_ids_{};
+    FootJacobianArray foot_jacobians_{};
 };

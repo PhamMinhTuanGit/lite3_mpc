@@ -1,5 +1,5 @@
 #include "RobotState.h"
-#include <eigen3/Eigen/Dense>
+#include <Eigen/Dense>
 #include <iostream>
 #include <math.h>
 
@@ -48,6 +48,5 @@ void RobotState::print()
        <<w.transpose()<<"\nRotation\n"<<R<<"\nYaw Rotation\n"
        <<R_yaw<<"\nFoot Locations\n"<<r_feet<<"\nInertia\n"<<I_body<<endl;
 }
-
 
 

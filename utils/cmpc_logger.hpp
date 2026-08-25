@@ -6,6 +6,7 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <iomanip>
 #include <string>
 #include <ctime>
 #include <sys/stat.h>
@@ -77,52 +78,66 @@ public:
                   // 4. MPC & Actual Foot Forces (Z component)
                   << "f_mpc_fr_z,f_mpc_fl_z,f_mpc_hr_z,f_mpc_hl_z,"
                   << "f_act_fr_z,f_act_fl_z,f_act_hr_z,f_act_hl_z,"
-                  // 5. Timers
-                  << "t_est_ms,t_mpc_ms,t_total_ms\n";
+                  << "gmo_valid,gmo_initialized,";
+        for (int i = 0; i < 18; ++i) log_file_ << "gmo_p_" << i << ',';
+        for (int i = 0; i < 18; ++i) log_file_ << "gmo_p_hat_" << i << ',';
+        for (int i = 0; i < 18; ++i) log_file_ << "gmo_residual_" << i << ',';
+        const char* legs[4] = {"fr", "fl", "hr", "hl"};
+        const char* axes[3] = {"x", "y", "z"};
+        for (int leg = 0; leg < 4; ++leg) {
+            for (int axis = 0; axis < 3; ++axis)
+                log_file_ << "gmo_force_" << legs[leg] << '_' << axes[axis] << ',';
+            log_file_ << "gmo_force_" << legs[leg] << "_norm,";
+        }
+        log_file_ << "gt_valid,";
+        for (int leg = 0; leg < 4; ++leg) {
+            log_file_ << "gt_contact_" << legs[leg] << ',';
+            for (int axis = 0; axis < 3; ++axis)
+                log_file_ << "gt_force_" << legs[leg] << '_' << axes[axis] << ',';
+        }
+        log_file_ << "t_est_ms,t_gmo_ms,t_grf_ms,t_mpc_ms,t_total_ms\n";
     }
 
     void Log(double time_ms, const CmpcTelemetryData& telem) {
         if (!is_open_) return;
         record_count_++;
 
-        char line_buf[1024];
-        int len = snprintf(line_buf, sizeof(line_buf),
-            "%.3f,%lu,"
-            // Commands
-            "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,"
-            // KF Positions & Velocities
-            "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,"
-            // KF Euler & Omega & Acc
-            "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,"
-            // KF Contacts
-            "%.2f,%.2f,%.2f,%.2f,"
-            // Mass & CoM
-            "%.3f,%.3f,%.4f,%.4f,%.4f,%.2f,"
-            // MPC & Actual Forces (Z)
-            "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,"
-            // Timers
-            "%.3f,%.3f,%.3f\n",
-            time_ms, (unsigned long)record_count_,
-            telem.cmd_vx, telem.cmd_vy, telem.cmd_yaw_rate,
-            telem.des_vx, telem.des_vy, telem.des_yaw_rate,
-            telem.kf_pos[0], telem.kf_pos[1], telem.kf_pos[2],
-            telem.kf_vel_world[0], telem.kf_vel_world[1], telem.kf_vel_world[2],
-            telem.kf_vel_body[0], telem.kf_vel_body[1], telem.kf_vel_body[2],
-            telem.kf_rpy[0], telem.kf_rpy[1], telem.kf_rpy[2],
-            telem.kf_omega_body[0], telem.kf_omega_body[1], telem.kf_omega_body[2],
-            telem.kf_acc_body[0], telem.kf_acc_body[1], telem.kf_acc_body[2],
-            telem.kf_contact_prob[1], telem.kf_contact_prob[0], telem.kf_contact_prob[3], telem.kf_contact_prob[2], // FL, FR, HL, HR
-            telem.est_mass_raw, telem.est_mass_filtered,
-            telem.est_com_body[0], telem.est_com_body[1], telem.est_com_body[2],
-            telem.total_support_force_z,
-            telem.f_mpc_des_world[0][2], telem.f_mpc_des_world[1][2], telem.f_mpc_des_world[2][2], telem.f_mpc_des_world[3][2],
-            telem.f_act_est_world[0][2], telem.f_act_est_world[1][2], telem.f_act_est_world[2][2], telem.f_act_est_world[3][2],
-            telem.t_est_ms, telem.t_mpc_ms, telem.t_total_ms
-        );
-
-        if (len > 0) {
-            log_file_.write(line_buf, len);
+        std::ostringstream line;
+        line << std::fixed << std::setprecision(4)
+             << time_ms << ',' << record_count_ << ','
+             << telem.cmd_vx << ',' << telem.cmd_vy << ',' << telem.cmd_yaw_rate << ','
+             << telem.des_vx << ',' << telem.des_vy << ',' << telem.des_yaw_rate << ',';
+        for (float value : telem.kf_pos) line << value << ',';
+        for (float value : telem.kf_vel_world) line << value << ',';
+        for (float value : telem.kf_vel_body) line << value << ',';
+        for (float value : telem.kf_rpy) line << value << ',';
+        for (float value : telem.kf_omega_body) line << value << ',';
+        for (float value : telem.kf_acc_body) line << value << ',';
+        line << telem.kf_contact_prob[1] << ',' << telem.kf_contact_prob[0] << ','
+             << telem.kf_contact_prob[3] << ',' << telem.kf_contact_prob[2] << ','
+             << telem.est_mass_raw << ',' << telem.est_mass_filtered << ',';
+        for (float value : telem.est_com_body) line << value << ',';
+        line << telem.total_support_force_z << ',';
+        for (int leg = 0; leg < 4; ++leg) line << telem.f_mpc_des_world[leg][2] << ',';
+        for (int leg = 0; leg < 4; ++leg) line << telem.f_act_est_world[leg][2] << ',';
+        line << static_cast<int>(telem.gmo_valid) << ','
+             << static_cast<int>(telem.gmo_initialized) << ',';
+        for (float value : telem.gmo_momentum) line << value << ',';
+        for (float value : telem.gmo_momentum_hat) line << value << ',';
+        for (float value : telem.gmo_residual) line << value << ',';
+        for (int leg = 0; leg < 4; ++leg) {
+            for (float value : telem.gmo_force_world[leg]) line << value << ',';
+            line << telem.gmo_force_norm[leg] << ',';
         }
+        line << static_cast<int>(telem.gt_valid) << ',';
+        for (int leg = 0; leg < 4; ++leg) {
+            line << telem.gt_contact[leg] << ',';
+            for (float value : telem.gt_force_world[leg]) line << value << ',';
+        }
+        line << telem.t_est_ms << ',' << telem.t_gmo_ms << ','
+             << telem.t_grf_ms << ',' << telem.t_mpc_ms << ','
+             << telem.t_total_ms << '\n';
+        log_file_ << line.str();
     }
 };
 

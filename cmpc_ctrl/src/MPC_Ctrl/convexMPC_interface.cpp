@@ -2,7 +2,7 @@
 #include "Utilities/common_types.h"
 #include "SolverMPC.h"
 #include "RobotState.h"
-#include <eigen3/Eigen/Dense>
+#include <Eigen/Dense>
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>

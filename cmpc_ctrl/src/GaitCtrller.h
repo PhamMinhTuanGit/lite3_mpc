@@ -9,6 +9,8 @@
 #include <string>
 
 #include "Controllers/ContactEstimator.h"
+#include "Controllers/GeneralizedMomentumObserver.h"
+#include "Controllers/GroundReactionForceEstimator.h"
 #include "Controllers/ControlFSMData.h"
 #include "Controllers/DesiredStateCommand.h"
 #include "Controllers/OrientationEstimator.h"
@@ -21,6 +23,7 @@
 #include "MPC_Ctrl/ConvexMPCLocomotion.h"
 #include "MPC_Ctrl/CmpcTelemetry.h"
 #include "Utilities/IMUTypes.h"
+#include "Lite3StateMapper.hpp"
 #include "calculateTool.h"
 
 struct JointEff
@@ -31,7 +34,7 @@ struct JointEff
 class GaitCtrller
 {
 public:
-    GaitCtrller(double freq, double *PIDParam);
+    GaitCtrller(double freq, double *PIDParam, const GMOConfig& gmoConfig = GMOConfig{});
     ~GaitCtrller();
     void SetIMUData(double *imuData);
     void SetLegData(double *motorData);
@@ -62,6 +65,14 @@ private:
     std::unique_ptr<RobotControlParameters> controlParameters;
     std::unique_ptr<DesiredStateCommand<float>> _desiredStateCommand;
     std::unique_ptr<SafetyChecker<float>> safetyChecker;
+    GMOConfig _gmoConfig;
+    Lite3Dynamics _pinocchioDynamics;
+    Lite3StateMapper _stateMapper;
+    Lite3MappedState _mappedState;
+    std::unique_ptr<GeneralizedMomentumObserver> _gmo;
+    std::unique_ptr<GroundReactionForceEstimator> _grfEstimator;
+    GMOResult _gmoResult;
+    GRFResult _grfResult;
 };
 
 extern "C"
@@ -71,13 +82,27 @@ extern "C"
     JointEff jointEff;
 
     // first step, init the controller
-    void init_controller(double freq, double PIDParam[])
+    void init_controller_with_gmo(
+        double freq,
+        double PIDParam[],
+        int enabled,
+        double gain,
+        double forceDamping)
     {
         if (NULL != gCtrller)
         {
             delete gCtrller;
         }
-        gCtrller = new GaitCtrller(freq, PIDParam);
+        GMOConfig config;
+        config.enabled = enabled != 0;
+        config.gain = gain;
+        config.force_damping = forceDamping;
+        gCtrller = new GaitCtrller(freq, PIDParam, config);
+    }
+
+    void init_controller(double freq, double PIDParam[])
+    {
+        init_controller_with_gmo(freq, PIDParam, 1, 30.0, 1e-4);
     }
 
     // the kalman filter need to work second

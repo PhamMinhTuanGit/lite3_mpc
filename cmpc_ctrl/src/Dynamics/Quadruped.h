@@ -15,7 +15,7 @@
 #include "FloatingBaseModel.h"
 #include "SpatialInertia.h"
 
-#include <eigen3/Eigen/StdVector>
+#include <Eigen/StdVector>
 
 
 

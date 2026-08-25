@@ -80,6 +80,8 @@ endif()
 # ========== Include 头文件路径 ==========
 include_directories(
   /usr/include/eigen3
+  /usr/include
+  ${THIRD_PARTY}/Lite3_MotionSDK/lib
   ${THIRD_PARTY}/eigen/
   ${THIRD_PARTY}/gamepad/include
   ${THIRD_PARTY}/Lite3_MotionSDK/include/common
@@ -101,7 +103,12 @@ add_subdirectory(interface)
 # cmpc_ctrl/src must be set BEFORE add_subdirectory so qpOASES inherits it.
 # qpOASES headers use <qpOASES/include/qpOASES/...> paths relative to cmpc_ctrl/src.
 # Safe to add globally: no types.h conflict here (JCQP/types.h is deeper).
-include_directories(cmpc_ctrl/src)
+include_directories(
+  cmpc_ctrl/src
+  cmpc_ctrl/src/Controllers
+  cmpc_ctrl/src/StateEstimator
+  cmpc_ctrl/src/StateEstimator/include
+)
 
 add_subdirectory(cmpc_ctrl/src/JCQP)
 add_subdirectory(cmpc_ctrl/src/osqp)
@@ -110,16 +117,19 @@ add_subdirectory(cmpc_ctrl/src/qpOASES)
 set(CMPC_SRCS
   cmpc_ctrl/src/GaitCtrller.cpp
   cmpc_ctrl/src/calculateTool.cpp
-  cmpc_ctrl/src/Controllers/ContactEstimator.cpp
+  cmpc_ctrl/src/StateEstimator/ContactEstimator.cpp
   cmpc_ctrl/src/Controllers/DesiredStateCommand.cpp
   cmpc_ctrl/src/Controllers/FootSwingTrajectory.cpp
   cmpc_ctrl/src/Controllers/LegController.cpp
-  cmpc_ctrl/src/Controllers/OrientationEstimator.cpp
-  cmpc_ctrl/src/Controllers/PositionVelocityEstimator.cpp
+  cmpc_ctrl/src/Controllers/GeneralizedMomentumObserver.cpp
+  cmpc_ctrl/src/Controllers/GroundReactionForceEstimator.cpp
+  cmpc_ctrl/src/StateEstimator/OrientationEstimator.cpp
+  cmpc_ctrl/src/StateEstimator/PositionVelocityEstimator.cpp
   cmpc_ctrl/src/Controllers/SafetyChecker.cpp
   cmpc_ctrl/src/Dynamics/FloatingBaseModel.cpp
   cmpc_ctrl/src/Dynamics/Quadruped.cpp
   cmpc_ctrl/src/Pinocchio_Dynamics/Lite3DynamicModel.cpp
+  cmpc_ctrl/src/Pinocchio_Dynamics/Lite3StateMapper.cpp
   cmpc_ctrl/src/MPC_Ctrl/ConvexMPCLocomotion.cpp
   cmpc_ctrl/src/MPC_Ctrl/Gait.cpp
   cmpc_ctrl/src/MPC_Ctrl/SparseCMPC.cpp
@@ -151,14 +161,9 @@ message("USE_PYBULLET:    ${USE_PYBULLET}")
   endif()
 endif()
 
-# ========== 设置部署路径 ==========
-# 如果涉及到
-if (SEND_REMOTE)
-  set(PATH_LIB "../lib")
-  set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
-  set(CMAKE_INSTALL_RPATH "${PATH_LIB}/onnxruntime/${BUILD_PLATFORM}/lib")
-  # set(CMAKE_INSTALL_RPATH ${PATH_LIB}/libtorch/${BUILD_PLATFORM}/lib)
-endif()
+set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
+set(CMAKE_INSTALL_RPATH "$ORIGIN:$ORIGIN/../third_party/Lite3_MotionSDK/lib:/home/ysc/workspaces/tuanpm/lite3_mpc/third_party/Lite3_MotionSDK/lib:/home/ysc/cmpc_deploy/lib:/usr/local/lib")
+
 
 # ========== 快速链接器 (可选) ==========
 # Install mold with: sudo apt install mold
@@ -179,18 +184,6 @@ file(GLOB_RECURSE STATE_MACHINE_SRC "state_machine/*.c*")
 
 add_executable(cmpc_deploy main.cpp ${STATE_MACHINE_SRC} ${CMPC_SRCS})
 
-# ========== 链接基本库 ==========
-if(BUILD_SIM)
-    target_link_libraries(cmpc_deploy interface dw -lpthread -lm -lrt -ldl -lstdc++)
-else()
-    target_link_libraries(cmpc_deploy interface -lpthread -lm -lrt -ldl -lstdc++)
-endif()
-
-# CMPC solver libraries
-target_link_libraries(cmpc_deploy JCQP qpOASES osqpstatic)
-
-# JCQP, osqp, qpOASES headers: only to cmpc_deploy to avoid JCQP/types.h shadowing
-# osqp's types.h when compiling osqp's C files.
 target_include_directories(cmpc_deploy PRIVATE
   ${THIRD_PARTY}
   ${THIRD_PARTY}/boost
@@ -199,37 +192,44 @@ target_include_directories(cmpc_deploy PRIVATE
   cmpc_ctrl/src/osqp/include
   cmpc_ctrl/src/qpOASES/include
   cmpc_ctrl/src/Utilities
+  cmpc_ctrl/src/Controllers
+  cmpc_ctrl/src/StateEstimator
+  cmpc_ctrl/src/StateEstimator/include
   cmpc_ctrl/src/Pinocchio_Dynamics/include
 )
 
-# if (USE_ONNX)
-#   target_link_libraries(cmpc_deploy onnxruntime)
-#   # target_link_libraries(cmpc_deploy torch)
-# endif()
+# ========== 链接库 ==========
+target_link_libraries(cmpc_deploy
+    interface
+    JCQP
+    qpOASES
+    osqpstatic
+)
 
-# MuJoCo
-
-if (BUILD_SIM)
-  if (USE_MJCPP)
-    message("build simulation mujoco")
-    target_link_libraries(cmpc_deploy mujoco glfw)
-  endif()
-endif()
-
+# SDK动态链接库
 if (BUILD_SIM)
   link_directories(${THIRD_PARTY}/Lite3_MotionSDK/lib)
   target_link_libraries(cmpc_deploy
       ${PROJECT_SOURCE_DIR}/third_party/Lite3_MotionSDK/lib/libdeeprobotics_legged_sdk_x86_64.so
-      pthread
-      rt
   )
 else()
   target_link_libraries(cmpc_deploy
       ${PROJECT_SOURCE_DIR}/third_party/Lite3_MotionSDK/lib/libdeeprobotics_legged_sdk_aarch64.so
-      pthread
-      rt
   )
 endif()
+
+if(BUILD_SIM)
+    target_link_libraries(cmpc_deploy dw)
+endif()
+
+# System libraries dat o cuoi de giai quyet toan bo symbol dlopen, math, thread
+target_link_libraries(cmpc_deploy
+    pthread
+    rt
+    dl
+    m
+    stdc++
+)
 
 if (BUILD_SIM)
     target_compile_definitions(cmpc_deploy PRIVATE BUILD_SIMULATION)
@@ -259,6 +259,51 @@ if (BUILD_SIM)
     message("build simulation raisim")
     target_link_libraries(cmpc_deploy raisim::raisim)
   endif()
+endif()
+
+# ========== Test Executables (Pinocchio & Dynamics Verification) ==========
+option(BUILD_TESTS "Build verification and smoke tests" ON)
+if(BUILD_TESTS)
+  enable_testing()
+  add_executable(pinocchio_smoke tests/pinocchio_smoke.cpp)
+  target_include_directories(pinocchio_smoke PRIVATE
+    ${THIRD_PARTY}
+    ${THIRD_PARTY}/boost
+  )
+  target_link_libraries(pinocchio_smoke -lpthread -lm -lrt -ldl -lstdc++)
+  add_test(NAME pinocchio_smoke COMMAND pinocchio_smoke)
+
+  add_executable(lite3_pinocchio_model_smoke
+    tests/lite3_pinocchio_model_smoke.cpp
+    cmpc_ctrl/src/Pinocchio_Dynamics/Lite3DynamicModel.cpp
+  )
+  target_include_directories(lite3_pinocchio_model_smoke PRIVATE
+    ${THIRD_PARTY}
+    ${THIRD_PARTY}/boost
+    cmpc_ctrl/src/Pinocchio_Dynamics/include
+  )
+  target_link_libraries(lite3_pinocchio_model_smoke -lpthread -lm -lrt -ldl -lstdc++)
+  add_test(NAME lite3_pinocchio_model_smoke COMMAND lite3_pinocchio_model_smoke)
+
+  add_executable(lite3_gmo_smoke
+    tests/lite3_gmo_smoke.cpp
+    cmpc_ctrl/src/Pinocchio_Dynamics/Lite3DynamicModel.cpp
+    cmpc_ctrl/src/Pinocchio_Dynamics/Lite3StateMapper.cpp
+    cmpc_ctrl/src/Controllers/GeneralizedMomentumObserver.cpp
+    cmpc_ctrl/src/Controllers/GroundReactionForceEstimator.cpp
+    cmpc_ctrl/src/Controllers/LegController.cpp
+  )
+  target_include_directories(lite3_gmo_smoke PRIVATE
+    ${THIRD_PARTY}
+    ${THIRD_PARTY}/boost
+    cmpc_ctrl/src
+    cmpc_ctrl/src/Controllers
+    cmpc_ctrl/src/StateEstimator
+    cmpc_ctrl/src/StateEstimator/include
+    cmpc_ctrl/src/Pinocchio_Dynamics/include
+  )
+  target_link_libraries(lite3_gmo_smoke -lpthread -lm -lrt -ldl -lstdc++)
+  add_test(NAME lite3_gmo_smoke COMMAND lite3_gmo_smoke)
 endif()
 
 if (SEND_REMOTE)

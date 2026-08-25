@@ -25,7 +25,7 @@ struct CmpcTelemetryData {
     float kf_rpy[3];            // roll, pitch, yaw [rad]
     float kf_omega_body[3];     // wx, wy, wz [rad/s] (body frame)
     float kf_acc_body[3];       // ax, ay, az [m/s^2] (body frame)
-    float kf_contact_prob[4];   // Contact probability / flag for 4 legs (FL, FR, HL, HR)
+    float kf_contact_prob[4];   // Scheduled contact/phase: FR, FL, HR, HL
 
     // 3. MPC & CoM / Mass Estimator
     float est_mass_raw;         // Instantaneous mass from joint torques [kg]
@@ -39,8 +39,25 @@ struct CmpcTelemetryData {
     float f_mpc_des_world[4][3];  // Optimal MPC reaction force in world [N]
     float f_act_est_world[4][3];  // Actual reaction force from motor torques in world [N]
 
-    // 5. Computation Timing (ms)
+    // 5. Read-only Generalized Momentum Observer (Pinocchio generalized order)
+    uint8_t gmo_valid;
+    uint8_t gmo_initialized;
+    float gmo_momentum[18];
+    float gmo_momentum_hat[18];
+    float gmo_residual[18];
+    float gmo_force_world[4][3]; // FR, FL, HR, HL
+    float gmo_force_norm[4];
+    float gmo_fz[4];
+
+    // 6. Simulation-only contact ground truth (FR, FL, HR, HL)
+    uint8_t gt_valid;
+    float gt_contact[4];
+    float gt_force_world[4][3];
+
+    // 7. Computation Timing (ms)
     float t_est_ms;
+    float t_gmo_ms;
+    float t_grf_ms;
     float t_mpc_ms;
     float t_total_ms;
 };

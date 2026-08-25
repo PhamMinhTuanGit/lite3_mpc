@@ -164,6 +164,16 @@ public:
         data_json_["cmpc"]["total_support_fz"] = 0.0f;
 
         data_json_["cmpc"]["t_est_ms"] = 0.0f;
+        data_json_["cmpc"]["gmo_valid"] = false;
+        data_json_["cmpc"]["gmo_initialized"] = false;
+        data_json_["cmpc"]["gmo_residual"] = std::vector<float>(18, 0.0f);
+        data_json_["cmpc"]["gmo_force_world"] = std::vector<float>(12, 0.0f);
+        data_json_["cmpc"]["scheduled_contact"] = std::vector<float>(4, 0.0f);
+        data_json_["cmpc"]["gt_valid"] = false;
+        data_json_["cmpc"]["gt_contact"] = std::vector<float>(4, 0.0f);
+        data_json_["cmpc"]["gt_force_world"] = std::vector<float>(12, 0.0f);
+        data_json_["cmpc"]["t_gmo_ms"] = 0.0f;
+        data_json_["cmpc"]["t_grf_ms"] = 0.0f;
         data_json_["cmpc"]["t_mpc_ms"] = 0.0f;
         data_json_["cmpc"]["t_total_ms"] = 0.0f;
     }
@@ -225,7 +235,29 @@ public:
         data_json_["cmpc"]["est_com_z"] = telem.est_com_body[2];
         data_json_["cmpc"]["total_support_fz"] = telem.total_support_force_z;
 
+        data_json_["cmpc"]["gmo_valid"] = telem.gmo_valid != 0;
+        data_json_["cmpc"]["gmo_initialized"] = telem.gmo_initialized != 0;
+        data_json_["cmpc"]["gmo_residual"] =
+            std::vector<float>(telem.gmo_residual, telem.gmo_residual + 18);
+        std::vector<float> gmo_force(12);
+        std::vector<float> gt_force(12);
+        for (int leg = 0; leg < 4; ++leg) {
+            for (int axis = 0; axis < 3; ++axis) {
+                gmo_force[leg * 3 + axis] = telem.gmo_force_world[leg][axis];
+                gt_force[leg * 3 + axis] = telem.gt_force_world[leg][axis];
+            }
+        }
+        data_json_["cmpc"]["gmo_force_world"] = gmo_force;
+        data_json_["cmpc"]["scheduled_contact"] =
+            std::vector<float>(telem.kf_contact_prob, telem.kf_contact_prob + 4);
+        data_json_["cmpc"]["gt_valid"] = telem.gt_valid != 0;
+        data_json_["cmpc"]["gt_contact"] =
+            std::vector<float>(telem.gt_contact, telem.gt_contact + 4);
+        data_json_["cmpc"]["gt_force_world"] = gt_force;
+
         data_json_["cmpc"]["t_est_ms"] = telem.t_est_ms;
+        data_json_["cmpc"]["t_gmo_ms"] = telem.t_gmo_ms;
+        data_json_["cmpc"]["t_grf_ms"] = telem.t_grf_ms;
         data_json_["cmpc"]["t_mpc_ms"] = telem.t_mpc_ms;
         data_json_["cmpc"]["t_total_ms"] = telem.t_total_ms;
     }

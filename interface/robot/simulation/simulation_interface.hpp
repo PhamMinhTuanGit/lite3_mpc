@@ -19,6 +19,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <mutex>
 
 
 namespace interface{
@@ -29,6 +30,8 @@ namespace interface{
             VecXf joint_pos_, joint_vel_, joint_tau_;
             bool start_thread_flag_ = false;
             std::thread sim_thread_, send_thread_;
+            GroundTruthContactData ground_truth_contact_;
+            std::mutex contact_mutex_;
         public:
         SimulationInterface(const std::string& name, int dof_num=12):RobotInterface(name, dof_num){
             joint_pos_ = VecXf::Zero(dof_num_);
@@ -62,6 +65,10 @@ namespace interface{
         }
         virtual VecXf GetContactForce() {
             return VecXf::Zero(4);
+        }
+        virtual GroundTruthContactData GetGroundTruthContactData() override {
+            std::lock_guard<std::mutex> lock(contact_mutex_);
+            return ground_truth_contact_;
         }
         virtual void SetJointCommand(Eigen::Matrix<float, Eigen::Dynamic, 5> input){
             // (current torque, not last torque, video content slip of the tongue)
@@ -130,7 +137,7 @@ namespace interface{
 
             // 接收数据
             char buffer[1024]={0};
-            float data[47]={0};
+            float payload[61]={0};
             struct sockaddr_in clientAddr;
             socklen_t clientAddrLen = sizeof(clientAddr);
 
@@ -150,14 +157,39 @@ namespace interface{
                     return;
                 }
 
-                std::memcpy(data, buffer, 46*sizeof(float));
-                run_time_ = ((double*)(data))[0];
-                rpy_ = Eigen::Map<Vec3f>(data+2, 3); 
-                acc_ = Eigen::Map<Vec3f>(data+5, 3); 
-                omega_body_ = Eigen::Map<Vec3f>(data+8, 3); 
-                joint_pos_ = Eigen::Map<VecXf>(data+11, 12); 
-                joint_vel_ = Eigen::Map<VecXf>(data+23, 12); 
-                joint_tau_ = Eigen::Map<VecXf>(data+35, 12); 
+                constexpr int kLegacyPacketBytes = 8 + 45 * sizeof(float);
+                constexpr int kExtendedPacketBytes = 8 + 61 * sizeof(float);
+                if (recvLen != kLegacyPacketBytes && recvLen != kExtendedPacketBytes) {
+                    std::cerr << "Unexpected state packet size: " << recvLen << std::endl;
+                    continue;
+                }
+                std::memset(payload, 0, sizeof(payload));
+                std::memcpy(&run_time_, buffer, sizeof(run_time_));
+                std::memcpy(
+                    payload, buffer + sizeof(run_time_),
+                    static_cast<std::size_t>(recvLen) - sizeof(run_time_));
+                rpy_ = Eigen::Map<Vec3f>(payload, 3);
+                acc_ = Eigen::Map<Vec3f>(payload + 3, 3);
+                omega_body_ = Eigen::Map<Vec3f>(payload + 6, 3);
+                joint_pos_ = Eigen::Map<VecXf>(payload + 9, 12);
+                joint_vel_ = Eigen::Map<VecXf>(payload + 21, 12);
+                joint_tau_ = Eigen::Map<VecXf>(payload + 33, 12);
+
+                GroundTruthContactData contact_data;
+                if (recvLen == kExtendedPacketBytes) {
+                    contact_data.valid = true;
+                    for (int leg = 0; leg < 4; ++leg) {
+                        contact_data.contact[leg] = payload[45 + leg];
+                        for (int axis = 0; axis < 3; ++axis) {
+                            contact_data.force_world[leg][axis] =
+                                payload[49 + leg * 3 + axis];
+                        }
+                    }
+                }
+                {
+                    std::lock_guard<std::mutex> lock(contact_mutex_);
+                    ground_truth_contact_ = contact_data;
+                }
 
                 // 打印接收到的数据
                 // std::cout << "Received data: " << run_time_ << std::endl;

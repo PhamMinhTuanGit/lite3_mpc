@@ -1,6 +1,7 @@
 #pragma once
 
 #include "MPC_Ctrl/CmpcTelemetry.h"
+#include "Controllers/GeneralizedMomentumObserver.h"
 
 // GaitCtrller.h is NOT included here.
 // It defines extern "C" wrappers inline, so including it in multiple TUs
@@ -8,7 +9,10 @@
 // via forward-declared extern "C" linkage (resolved from GaitCtrller.cpp).
 class CMPCBridge {
 public:
-    CMPCBridge(double freq, double* pidParam4);
+    CMPCBridge(
+        double freq,
+        double* pidParam4,
+        const GMOConfig& gmoConfig = GMOConfig{});
     ~CMPCBridge();
 
     void SetGaitType(int gaitType);

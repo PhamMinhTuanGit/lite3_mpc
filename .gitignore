@@ -75,3 +75,5 @@ tmp/
 */qpOASES/*
 */osqp/*
 tests/pinocchio_smoke_debug
+
+build_arm20/*

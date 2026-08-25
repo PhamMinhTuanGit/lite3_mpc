@@ -37,6 +37,7 @@ private:
     double imu_data_[10]   = {};
     double motor_data_[36] = {};
     double vel_cmd_[3]     = {};
+    interface::GroundTruthContactData ground_truth_contact_;
     // Chạy TorqueCalculator mỗi `kDecimation` lần Run() (1 = mỗi tick)
     static constexpr int kDecimation = 1;
 
@@ -144,15 +145,25 @@ private:
             if (cnt >= 0 && cnt % kDecimation == 0 && cnt != run_cnt_record) {
                 // Lấy bản sao quan sát + lệnh vận tốc đồng bộ hoàn toàn (Atomic Snapshot)
                 double imu[10], motor[36], vel[3], effort[12] = {};
+                interface::GroundTruthContactData ground_truth;
                 {
                     std::lock_guard<std::mutex> lk(data_mtx_);
                     std::memcpy(imu,   imu_data_,   sizeof(imu));
                     std::memcpy(motor, motor_data_, sizeof(motor));
                     std::memcpy(vel,   vel_cmd_,    sizeof(vel));
+                    ground_truth = ground_truth_contact_;
                 }
                 gait_ctrl_->SetRobotVel(vel);
                 CmpcTelemetryData telem = {};
                 gait_ctrl_->TorqueCalculator(imu, motor, effort, &telem);
+                telem.gt_valid = static_cast<uint8_t>(ground_truth.valid);
+                for (int leg = 0; leg < 4; ++leg) {
+                    telem.gt_contact[leg] = ground_truth.contact[leg];
+                    for (int axis = 0; axis < 3; ++axis) {
+                        telem.gt_force_world[leg][axis] =
+                            ground_truth.force_world[leg][axis];
+                    }
+                }
                 ApplyEffort(effort);
 
                 double time_ms = (ri_ptr_) ? (ri_ptr_->GetInterfaceTimeStamp() * 1000.0) : 0.0;
@@ -244,6 +255,7 @@ public:
             BuildImuData(imu_data_);
             BuildMotorData(motor_data_);
             BuildVelocityCommand(vel_cmd_);
+            ground_truth_contact_ = ri_ptr_->GetGroundTruthContactData();
         }
         ++state_run_cnt_;
     }

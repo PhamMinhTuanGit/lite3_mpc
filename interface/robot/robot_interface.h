@@ -16,6 +16,13 @@
 using namespace types;
 
 namespace interface{
+
+struct GroundTruthContactData {
+    bool valid = false;
+    float contact[4] = {};
+    float force_world[4][3] = {};
+};
+
 class RobotInterface{
 private:
     /* data */
@@ -104,6 +111,11 @@ public:
      * @return VecXf        force vector
      */
     virtual VecXf GetContactForce() = 0;
+
+    /** Simulation-only per-foot contact force. Hardware defaults to invalid. */
+    virtual GroundTruthContactData GetGroundTruthContactData() {
+        return GroundTruthContactData{};
+    }
 
     /**
      * @brief Get the motor temperture 

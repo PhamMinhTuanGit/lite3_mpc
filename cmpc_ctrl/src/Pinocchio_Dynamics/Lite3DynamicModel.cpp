@@ -5,6 +5,8 @@
 #include <string>
 
 #include <pinocchio/algorithm/crba.hpp>
+#include <pinocchio/algorithm/frames.hpp>
+#include <pinocchio/algorithm/jacobian.hpp>
 #include <pinocchio/algorithm/rnea.hpp>
 #include <pinocchio/multibody/joint/joint-free-flyer.hpp>
 #include <pinocchio/multibody/joint/joint-revolute-unaligned.hpp>
@@ -102,6 +104,9 @@ Lite3Dynamics::Lite3Dynamics()
     : model_(buildLite3Model()), data_(model_)
 {
     cacheAndValidateIds();
+    for (auto& jacobian : foot_jacobians_) {
+        jacobian.setZero();
+    }
 }
 
 pinocchio::Model Lite3Dynamics::buildLite3Model()
@@ -275,6 +280,42 @@ const Eigen::VectorXd& Lite3Dynamics::computeGravity(const Eigen::VectorXd& q)
 {
     validateConfigurationSize(q);
     return pinocchio::computeGeneralizedGravity(model_, data_, q);
+}
+
+const Eigen::MatrixXd& Lite3Dynamics::computeCoriolisMatrix(
+    const Eigen::VectorXd& q,
+    const Eigen::VectorXd& v)
+{
+    validateConfigurationSize(q);
+    validateVelocitySize(v);
+    pinocchio::computeCoriolisMatrix(model_, data_, q, v);
+    return data_.C;
+}
+
+const Lite3Dynamics::FootJacobian& Lite3Dynamics::computeFootJacobian(
+    Leg leg,
+    const Eigen::VectorXd& q)
+{
+    computeFootJacobians(q);
+    return foot_jacobians_[static_cast<std::size_t>(leg)];
+}
+
+const Lite3Dynamics::FootJacobianArray& Lite3Dynamics::computeFootJacobians(
+    const Eigen::VectorXd& q)
+{
+    validateConfigurationSize(q);
+    pinocchio::computeJointJacobians(model_, data_, q);
+    pinocchio::updateFramePlacements(model_, data_);
+
+    Eigen::Matrix<double, 6, kNv> full_jacobian;
+    for (std::size_t leg = 0; leg < kNumLegs; ++leg) {
+        full_jacobian.setZero();
+        pinocchio::getFrameJacobian(
+            model_, data_, foot_ids_[leg],
+            pinocchio::LOCAL_WORLD_ALIGNED, full_jacobian);
+        foot_jacobians_[leg] = full_jacobian.topRows<3>();
+    }
+    return foot_jacobians_;
 }
 
 void Lite3Dynamics::validateConfigurationSize(const Eigen::VectorXd& q) const

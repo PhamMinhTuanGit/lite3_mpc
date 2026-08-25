@@ -298,8 +298,10 @@ endif (R_LANG)
 add_subdirectory(lin_sys)
 
 # Static library
-#add_library (osqpstatic STATIC ${osqp_src} ${osqp_headers} ${linsys_solvers})
-add_library (osqpstatic SHARED ${osqp_src} ${osqp_headers} ${linsys_solvers})
+add_library (osqpstatic STATIC ${osqp_src} ${osqp_headers} ${linsys_solvers})
+target_link_libraries(osqpstatic PUBLIC ${CMAKE_DL_LIBS} m rt)
+
+
 # Give same name to static library output
 set_target_properties(osqpstatic PROPERTIES OUTPUT_NAME osqp)
 

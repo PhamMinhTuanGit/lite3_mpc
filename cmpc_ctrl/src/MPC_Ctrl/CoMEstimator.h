@@ -1,7 +1,7 @@
 #ifndef _COM_ESTIMATOR_H_
 #define _COM_ESTIMATOR_H_
 
-#include <eigen3/Eigen/Dense>
+#include <Eigen/Dense>
 #include <algorithm>
 #include <cmath>
 #include "RobotConfig.h"
@@ -281,4 +281,3 @@ private:
 };
 
 #endif // _COM_ESTIMATOR_H_
-

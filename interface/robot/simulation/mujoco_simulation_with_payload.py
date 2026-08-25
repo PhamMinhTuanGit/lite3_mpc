@@ -76,6 +76,11 @@ class MuJoCoSimulation:
         # Robot DOF list
         self.actuator_ids = [a for a in range(self.model.nu)]  # 0..11
         self.dof_num = len(self.actuator_ids)
+        self.foot_geom_ids = [
+            mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, name)
+            for name in ("FR_FOOT_collision", "FL_FOOT_collision",
+                         "HR_FOOT_collision", "HL_FOOT_collision")
+        ]
 
         # Initialize standing pose
         self._set_initial_pose(model_key)
@@ -247,6 +252,32 @@ class MuJoCoSimulation:
         yaw = np.arctan2(t3, t4)
         return np.array([roll, pitch, yaw], dtype=np.float32)
 
+    def _get_ground_truth_contacts(self):
+        contact_flags = np.zeros(4, dtype=np.float32)
+        force_world = np.zeros((4, 3), dtype=np.float32)
+        geom_to_leg = {geom_id: leg for leg, geom_id in enumerate(self.foot_geom_ids)
+                       if geom_id >= 0}
+        force_torque = np.zeros(6, dtype=np.float64)
+        for contact_id in range(self.data.ncon):
+            contact = self.data.contact[contact_id]
+            if contact.efc_address < 0:
+                continue
+            if contact.geom1 not in geom_to_leg and contact.geom2 not in geom_to_leg:
+                continue
+            mujoco.mj_contactForce(self.model, self.data, contact_id, force_torque)
+            world_force = contact.frame.reshape(3, 3).T @ force_torque[:3]
+            if contact.geom1 in geom_to_leg:
+                leg = geom_to_leg[contact.geom1]
+                force_world[leg] -= world_force.astype(np.float32)
+                if np.linalg.norm(world_force) > 1e-6:
+                    contact_flags[leg] = 1.0
+            if contact.geom2 in geom_to_leg:
+                leg = geom_to_leg[contact.geom2]
+                force_world[leg] += world_force.astype(np.float32)
+                if np.linalg.norm(world_force) > 1e-6:
+                    contact_flags[leg] = 1.0
+        return contact_flags, force_world
+
     def _send_robot_state(self, step: int):
         # IMU
         q_world = self.data.qpos[3:7]
@@ -258,6 +289,7 @@ class MuJoCoSimulation:
         q = self.data.qpos[7:7+self.dof_num]
         dq = self.data.qvel[6:6+self.dof_num]
         tau = self.input_tq.flatten()
+        contact_flags, force_world = self._get_ground_truth_contacts()
 
         # Pack and send
         payload = np.concatenate((
@@ -267,7 +299,9 @@ class MuJoCoSimulation:
             np.asarray(angvel_b, dtype=np.float32),
             q.astype(np.float32),
             dq.astype(np.float32),
-            tau.astype(np.float32)
+            tau.astype(np.float32),
+            contact_flags,
+            force_world.reshape(-1)
         ))
         fmt = "1d" + f"{len(payload)-1}f"
         try:
