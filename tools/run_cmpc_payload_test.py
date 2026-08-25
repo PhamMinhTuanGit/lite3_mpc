@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Chạy tự động cmpc_deploy với MuJoCo và payload 2 kg.
+"""Chạy tự động cmpc_deploy cho các kịch bản validation GMO/GRF.
 
 MuJoCo được khởi động trước controller để tránh watchdog sensor 50 ms đẩy FSM
 sang JointDamping trong lúc model còn đang load. Mọi mốc CLI sau đó tính theo
@@ -20,6 +20,7 @@ SIM_DIR = REPO / "interface" / "robot" / "simulation"
 SIM_SCRIPT = SIM_DIR / "mujoco_simulation_with_payload.py"
 RUN_DIR = REPO / "data" / "payload_test_runs"
 VENV_PY = REPO / ".venv" / "bin" / "python"
+ANALYZER = REPO / "tools" / "analyze_gmo_evidence.py"
 
 
 def send_key(proc, ch):
@@ -97,7 +98,9 @@ def validate_args(parser, args, phase2_start):
 
 
 def parse_args():
-    ap = argparse.ArgumentParser(description="Chạy test tự động cmpc_deploy + MuJoCo payload")
+    ap = argparse.ArgumentParser(description="Chạy validation GMO/GRF tự động với MuJoCo")
+    ap.add_argument("--scenario", choices=("nominal", "payload", "early-contact"),
+                    default="payload", help="mô hình/terrain dùng cho validation")
     ap.add_argument("--t-stand", type=float, default=3.0, help="mốc gửi z đứng dậy")
     ap.add_argument("--t-cmpc", type=float, default=8.0, help="mốc gửi x vào CMPC")
     ap.add_argument("--t-vel1", type=float, default=10.5, help="mốc bắt đầu pha 0.1 m/s")
@@ -169,7 +172,11 @@ def main():
 
     env_sim = dict(os.environ)
     env_sim.update(VIEWER="1" if args.viewer else "0",
-                   BASELOG_PATH=str(base_log), BASELOG_INTERVAL="50")
+                   BASELOG_PATH=str(base_log), BASELOG_INTERVAL="50",
+                   GMO_SIM_SCENARIO=args.scenario,
+                   GMO_ENABLE_PAYLOAD="1" if args.scenario == "payload" else "0")
+
+    telemetry_before = set((REPO / "data").glob("cmpc_telemetry_*.csv"))
 
     print(f"\n[run] controller log : {ctrl_log}")
     print(f"[run] sim log        : {sim_log}")
@@ -259,19 +266,30 @@ def main():
                 "mujoco": None if sim is None else sim.poll(),
             },
         }
+        telemetry_after = set((REPO / "data").glob("cmpc_telemetry_*.csv"))
+        new_telemetry = sorted(telemetry_after - telemetry_before,
+                               key=lambda path: path.stat().st_mtime)
+        telemetry_path = new_telemetry[-1] if new_telemetry else None
+        metadata["telemetry_path"] = None if telemetry_path is None else str(telemetry_path)
         metadata_path.write_text(json.dumps(metadata, indent=2) + "\n")
         ctrl_logf.close()
         sim_logf.close()
         timeline_logf.close()
 
     print(f"\n[run] xong. Log tại: {run_dir}")
+    if telemetry_path is not None and ANALYZER.is_file():
+        report_path = run_dir / "gmo_evidence_report.json"
+        print(f"[run] phân tích GMO/GRF: {telemetry_path}")
+        subprocess.run([str(VENV_PY), str(ANALYZER), str(telemetry_path),
+                        "--json", str(report_path)], check=False)
     if sim_time_origin is not None:
         win1 = (sim_time_origin + args.t_vel1 + 0.5,
                 sim_time_origin + phase2_start - 0.3)
         win2 = (sim_time_origin + phase2_start + args.vel2_press * args.vel2_gap + 0.5,
                 sim_time_origin + args.t_sitdown - 0.3)
-        print(f"Cửa sổ sim-time đề xuất: --win1 {win1[0]:.2f},{win1[1]:.2f} "
-              f"--win2 {win2[0]:.2f},{win2[1]:.2f}")
+        if win1[1] > win1[0] and win2[1] > win2[0]:
+            print(f"Cửa sổ sim-time đề xuất: --win1 {win1[0]:.2f},{win1[1]:.2f} "
+                  f"--win2 {win2[0]:.2f},{win2[1]:.2f}")
     print("Phân tích bằng: python3 tools/analyze_payload_test.py", run_dir)
 
 

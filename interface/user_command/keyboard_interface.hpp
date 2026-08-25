@@ -2,8 +2,10 @@
 
 #include "user_command_interface.h"
 #include "custom_types.h"
+#include <atomic>
 #include <cstdio>
 #include <functional>
+#include <sys/select.h>
 #include <termios.h>
 
 #define AXIS_STEP 0.1
@@ -16,7 +18,7 @@ class KeyboardInterface : public UserCommandInterface
 private:
     UserCommand usr_cmd_;
     // MotionStateFeedback msfb_;
-    bool start_thread_flag_;
+    std::atomic<bool> start_thread_flag_{false};
     std::thread kb_thread_;
     // std::mutex mtx_;  //  保护 usr_cmd_ 和 msfb_
     
@@ -42,7 +44,7 @@ public:
         std::memset(&usr_cmd_, 0, sizeof(usr_cmd_));
         std::cout << "Using Keyboard Command Interface" << std::endl;
     }
-    ~KeyboardInterface(){}
+    ~KeyboardInterface(){ Stop(); }
 
     virtual void Start(){
         start_thread_flag_ = true;
@@ -50,6 +52,9 @@ public:
     }
     virtual void Stop(){
         start_thread_flag_ = false;
+        if (kb_thread_.joinable()) {
+            kb_thread_.join();
+        }
     }
     virtual UserCommand GetUserCommand() override {
         // std::lock_guard<std::mutex> lock(mtx_);
@@ -79,7 +84,12 @@ public:
         while (start_thread_flag_) {
             // std::cout << "time: " << current_time << " " << forward_time_record << std::endl;
             // std::cout << "[Keyboard] Running..." << std::endl;
-            if(read(STDIN_FILENO, &input, 1) != -1){
+            fd_set read_fds;
+            FD_ZERO(&read_fds);
+            FD_SET(STDIN_FILENO, &read_fds);
+            timeval timeout{0, 50000};
+            const int ready = select(STDIN_FILENO + 1, &read_fds, nullptr, nullptr, &timeout);
+            if (ready > 0 && read(STDIN_FILENO, &input, 1) == 1){
                 double current_time = GetCurrentTimeStamp();
                 // std::lock_guard<std::mutex> lock(mtx_);  // 修改 usr_cmd_ 和读取 msfb_
 
@@ -149,5 +159,3 @@ public:
     }
 
 };
-
-

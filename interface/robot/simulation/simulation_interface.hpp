@@ -19,6 +19,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <atomic>
 #include <mutex>
 
 
@@ -28,7 +29,7 @@ namespace interface{
             double run_time_=0;
             Vec3f omega_body_, rpy_, acc_;
             VecXf joint_pos_, joint_vel_, joint_tau_;
-            bool start_thread_flag_ = false;
+            std::atomic<bool> start_thread_flag_{false};
             std::thread sim_thread_, send_thread_;
             GroundTruthContactData ground_truth_contact_;
             std::mutex contact_mutex_;
@@ -42,6 +43,7 @@ namespace interface{
 
             std::cout << robot_name_ << " is using simulation \n";
         }
+        ~SimulationInterface() override { Stop(); }
         virtual double GetInterfaceTimeStamp(){
             return run_time_;
         }
@@ -82,8 +84,9 @@ namespace interface{
         }
 
         virtual void Stop(){
-            // start_flag_ = false;
-            // sim_thread_.join();
+            start_thread_flag_ = false;
+            if (sim_thread_.joinable()) sim_thread_.join();
+            if (send_thread_.joinable()) send_thread_.join();
         }
 
         void ReceiveRobotData(){

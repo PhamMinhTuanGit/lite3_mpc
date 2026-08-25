@@ -4,6 +4,7 @@
 #include <math.h>
 #include <time.h>
 
+#include <array>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -42,6 +43,7 @@ public:
     void SetGaitType(int gaitType);
     void SetRobotMode(int mode);
     void SetRobotVel(double *vel);
+    void SetObservationTimestamp(double timestampSeconds);
     void TorqueCalculator(double *imuData, double *motorData, double *effort, CmpcTelemetryData *telem = nullptr);
 
 private:
@@ -73,6 +75,11 @@ private:
     std::unique_ptr<GroundReactionForceEstimator> _grfEstimator;
     GMOResult _gmoResult;
     GRFResult _grfResult;
+    double _observationTimestamp = -1.0;
+    double _lastObservationTimestamp = -1.0;
+    std::array<float, 256> _evidenceTimingMs{};
+    std::size_t _evidenceTimingCount = 0;
+    float _evidenceTimingP99Ms = 0.0f;
 };
 
 extern "C"
@@ -82,6 +89,19 @@ extern "C"
     JointEff jointEff;
 
     // first step, init the controller
+    void init_controller_with_gmo_config(
+        double freq,
+        double PIDParam[],
+        const GMOConfig *config)
+    {
+        if (NULL != gCtrller)
+        {
+            delete gCtrller;
+        }
+        gCtrller = new GaitCtrller(
+            freq, PIDParam, config != nullptr ? *config : GMOConfig{});
+    }
+
     void init_controller_with_gmo(
         double freq,
         double PIDParam[],
@@ -89,15 +109,11 @@ extern "C"
         double gain,
         double forceDamping)
     {
-        if (NULL != gCtrller)
-        {
-            delete gCtrller;
-        }
         GMOConfig config;
         config.enabled = enabled != 0;
         config.gain = gain;
         config.force_damping = forceDamping;
-        gCtrller = new GaitCtrller(freq, PIDParam, config);
+        init_controller_with_gmo_config(freq, PIDParam, &config);
     }
 
     void init_controller(double freq, double PIDParam[])
@@ -127,6 +143,11 @@ extern "C"
     void set_robot_vel(double vel[])
     {
         gCtrller->SetRobotVel(vel);
+    }
+
+    void set_observation_timestamp(double timestampSeconds)
+    {
+        gCtrller->SetObservationTimestamp(timestampSeconds);
     }
 
     // after init controller and pre work, the mpc calculator can work

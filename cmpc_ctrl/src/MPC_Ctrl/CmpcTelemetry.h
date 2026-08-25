@@ -42,12 +42,23 @@ struct CmpcTelemetryData {
     // 5. Read-only Generalized Momentum Observer (Pinocchio generalized order)
     uint8_t gmo_valid;
     uint8_t gmo_initialized;
+    uint8_t gmo_ready;
+    uint8_t gmo_invalid_reason;
+    uint32_t gmo_samples_since_reset;
+    uint64_t gmo_reset_count;
     float gmo_momentum[18];
     float gmo_momentum_hat[18];
     float gmo_residual[18];
-    float gmo_force_world[4][3]; // FR, FL, HR, HL
+    uint8_t grf_valid;
+    uint8_t grf_ready;
+    uint8_t grf_invalid_reason;
+    uint8_t grf_leg_valid[4];
+    float grf_jacobian_quality[4];
+    float gmo_force_raw_world[4][3]; // Uncalibrated solve, FR, FL, HR, HL
+    float gmo_force_world[4][3];     // Bias-corrected and filtered
     float gmo_force_norm[4];
     float gmo_fz[4];
+    float scheduled_contact[4];
 
     // 6. Simulation-only contact ground truth (FR, FL, HR, HL)
     uint8_t gt_valid;
@@ -58,6 +69,7 @@ struct CmpcTelemetryData {
     float t_est_ms;
     float t_gmo_ms;
     float t_grf_ms;
+    float t_evidence_p99_ms;
     float t_mpc_ms;
     float t_total_ms;
 };

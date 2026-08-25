@@ -18,5 +18,6 @@ public:
     void SetGaitType(int gaitType);
     void SetRobotMode(int mode);
     void SetRobotVel(double* vel3);
+    void SetObservationTimestamp(double timestampSeconds);
     void TorqueCalculator(double* imuData10, double* motorData24, double* effort12, CmpcTelemetryData* telem = nullptr);
 };

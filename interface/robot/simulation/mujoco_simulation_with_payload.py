@@ -30,12 +30,13 @@ BASELOG_PATH = os.environ.get("BASELOG_PATH")        # None = không ghi
 BASELOG_INTERVAL = int(os.environ.get("BASELOG_INTERVAL", "50"))  # số step giữa 2 sample (50 -> 50 ms)
 
 
-# ── Payload configuration (simulation only, controller model unchanged) ─────
+# ── GMO validation scenario (simulation only, controller model unchanged) ───
 # When ENABLE_PAYLOAD is True, use Lite3_payload.xml which adds a separate 2 kg
 # body 10 cm forward of the TORSO geometric center.  The controller model
 # (MiniCheetah.h) retains the original parameters, creating a mass/CoM mismatch
 # that tests disturbance-rejection and uncertainty handling.
-ENABLE_PAYLOAD = True              # toggle payload on/off
+GMO_SCENARIO = os.environ.get("GMO_SIM_SCENARIO", "payload")
+ENABLE_PAYLOAD = os.environ.get("GMO_ENABLE_PAYLOAD", "1") == "1"
 # ─────────────────────────────────────────────────────────────────────────────
 
 URDF_INIT = {
@@ -59,8 +60,13 @@ class MuJoCoSimulation:
         # ── Select model file ─────────────────────────────────────────────
         # When payload is enabled, use the XML that includes a separate 2 kg
         # payload body.  The controller model (MiniCheetah.h) is unchanged.
-        if ENABLE_PAYLOAD:
+        if GMO_SCENARIO == "early-contact":
+            # Stair terrain creates unscheduled/early touchdown opportunities.
+            xml_relpath = "../../../Lite3_description/lite3_mjcf/mjcf/Lite3_stair.xml"
+        elif ENABLE_PAYLOAD:
             xml_relpath = "Lite3_payload.xml"
+        else:
+            xml_relpath = "../../../third_party/deep_robotics_model/Lite3/Lite3_mjcf/mjcf/Lite3.xml"
         # ───────────────────────────────────────────────────────────────────
 
         # Load MJCF
@@ -98,7 +104,8 @@ class MuJoCoSimulation:
         self.timestamp = 0.0
         self.last_print_time = 0  # Track last print time
 
-        print(f"[INFO] MuJoCo model loaded, dof = {self.dof_num}")
+        print(f"[INFO] MuJoCo model loaded, scenario={GMO_SCENARIO}, "
+              f"payload={ENABLE_PAYLOAD}, dof={self.dof_num}")
 
         # Visualization
         self.viewer = None

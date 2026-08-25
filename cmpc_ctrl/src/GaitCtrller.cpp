@@ -1,6 +1,8 @@
 #include "GaitCtrller.h"
 #include "Utilities/Timer.h"
 
+#include <algorithm>
+
 GaitCtrller::GaitCtrller(
     double freq,
     double *PIDParam,
@@ -23,7 +25,7 @@ GaitCtrller::GaitCtrller(
     _gmo = std::make_unique<GeneralizedMomentumObserver>(
         _pinocchioDynamics, 1.0 / freq, _gmoConfig);
     _grfEstimator = std::make_unique<GroundReactionForceEstimator>(
-        _pinocchioDynamics, _gmoConfig.force_damping);
+        _pinocchioDynamics, 1.0 / freq, _gmoConfig);
     for (int i = 0; i < 4; i++)
     {
         ctrlParam(i) = PIDParam[i];
@@ -130,6 +132,11 @@ void GaitCtrller::SetRobotVel(double *vel)
     }
 }
 
+void GaitCtrller::SetObservationTimestamp(double timestampSeconds)
+{
+    _observationTimestamp = timestampSeconds;
+}
+
 void GaitCtrller::TorqueCalculator(double *imuData, double *motorData, double *effort, CmpcTelemetryData *telem)
 {
     Timer t_total;
@@ -142,6 +149,21 @@ void GaitCtrller::TorqueCalculator(double *imuData, double *motorData, double *e
     double t_grf_ms = 0.0;
     if (_gmoConfig.enabled)
     {
+        if (_observationTimestamp >= 0.0 && _lastObservationTimestamp >= 0.0)
+        {
+            const double sample_gap =
+                _observationTimestamp - _lastObservationTimestamp;
+            if (!(sample_gap > 0.0)
+                || sample_gap > _gmoConfig.max_sample_gap_s)
+            {
+                _gmo->reset(GMOInvalidReason::SampleDiscontinuity);
+                _grfEstimator->reset();
+            }
+        }
+        if (_observationTimestamp >= 0.0)
+        {
+            _lastObservationTimestamp = _observationTimestamp;
+        }
         try
         {
             const Lite3StateMapStatus map_status = _stateMapper.map(
@@ -158,7 +180,8 @@ void GaitCtrller::TorqueCalculator(double *imuData, double *motorData, double *e
                 {
                     Timer t_grf;
                     _grfResult = _grfEstimator->update(
-                        _mappedState.q, _gmoResult.residual);
+                        _mappedState.q, _gmoResult.residual,
+                        _gmoResult.ready);
                     t_grf_ms = t_grf.getMs();
                 }
                 else
@@ -169,7 +192,7 @@ void GaitCtrller::TorqueCalculator(double *imuData, double *motorData, double *e
             }
             else
             {
-                _gmo->reset();
+                _gmo->reset(GMOInvalidReason::NonFiniteInput);
                 _grfEstimator->reset();
                 _gmoResult = GMOResult{};
                 _grfResult = GRFResult{};
@@ -177,11 +200,27 @@ void GaitCtrller::TorqueCalculator(double *imuData, double *motorData, double *e
         }
         catch (const std::exception&)
         {
-            _gmo->reset();
+            _gmo->reset(GMOInvalidReason::DynamicsFailure);
             _grfEstimator->reset();
             _gmoResult = GMOResult{};
             _grfResult = GRFResult{};
         }
+    }
+
+    const float evidence_timing_ms =
+        static_cast<float>(t_gmo_ms + t_grf_ms);
+    _evidenceTimingMs[_evidenceTimingCount % _evidenceTimingMs.size()] =
+        evidence_timing_ms;
+    ++_evidenceTimingCount;
+    if ((_evidenceTimingCount % _evidenceTimingMs.size()) == 0)
+    {
+        auto sorted_timing = _evidenceTimingMs;
+        const std::size_t p99_index =
+            static_cast<std::size_t>(0.99 * (sorted_timing.size() - 1));
+        std::nth_element(
+            sorted_timing.begin(), sorted_timing.begin() + p99_index,
+            sorted_timing.end());
+        _evidenceTimingP99Ms = sorted_timing[p99_index];
     }
 
     // Setup the leg controller for a new iteration
@@ -275,6 +314,11 @@ void GaitCtrller::TorqueCalculator(double *imuData, double *motorData, double *e
 
         telem->gmo_valid = static_cast<uint8_t>(_gmoResult.valid);
         telem->gmo_initialized = static_cast<uint8_t>(_gmoResult.initialized);
+        telem->gmo_ready = static_cast<uint8_t>(_gmoResult.ready);
+        telem->gmo_invalid_reason =
+            static_cast<uint8_t>(_gmoResult.invalid_reason);
+        telem->gmo_samples_since_reset = _gmoResult.samples_since_reset;
+        telem->gmo_reset_count = _gmoResult.reset_count;
         for (int i = 0; i < Lite3Dynamics::kNv; ++i)
         {
             telem->gmo_momentum[i] = static_cast<float>(_gmoResult.momentum[i]);
@@ -282,10 +326,19 @@ void GaitCtrller::TorqueCalculator(double *imuData, double *motorData, double *e
                 static_cast<float>(_gmoResult.momentum_hat[i]);
             telem->gmo_residual[i] = static_cast<float>(_gmoResult.residual[i]);
         }
+        telem->grf_valid = static_cast<uint8_t>(_grfResult.valid);
+        telem->grf_ready = static_cast<uint8_t>(_grfResult.ready);
+        telem->grf_invalid_reason =
+            static_cast<uint8_t>(_grfResult.invalid_reason);
         for (int leg = 0; leg < Lite3Dynamics::kNumLegs; ++leg)
         {
+            telem->grf_leg_valid[leg] = _grfResult.leg_valid[leg];
+            telem->grf_jacobian_quality[leg] =
+                static_cast<float>(_grfResult.jacobian_quality[leg]);
             for (int axis = 0; axis < 3; ++axis)
             {
+                telem->gmo_force_raw_world[leg][axis] =
+                    static_cast<float>(_grfResult.raw_force_world[leg][axis]);
                 telem->gmo_force_world[leg][axis] =
                     static_cast<float>(_grfResult.force_world[leg][axis]);
             }
@@ -293,11 +346,13 @@ void GaitCtrller::TorqueCalculator(double *imuData, double *motorData, double *e
                 static_cast<float>(_grfResult.force_world[leg].norm());
             telem->gmo_fz[leg] =
                 static_cast<float>(_grfResult.force_world[leg].z());
+            telem->scheduled_contact[leg] = convexMPC->contact_state[leg];
         }
 
         telem->t_est_ms = (float)t_est_ms;
         telem->t_gmo_ms = (float)t_gmo_ms;
         telem->t_grf_ms = (float)t_grf_ms;
+        telem->t_evidence_p99_ms = _evidenceTimingP99Ms;
         telem->t_mpc_ms = (float)t_mpc_ms;
         telem->t_total_ms = (float)t_total_ms;
     }

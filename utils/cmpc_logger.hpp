@@ -72,13 +72,15 @@ public:
                   << "kf_roll,kf_pitch,kf_yaw,"
                   << "kf_omega_body_x,kf_omega_body_y,kf_omega_body_z,"
                   << "kf_acc_body_x,kf_acc_body_y,kf_acc_body_z,"
-                  << "kf_contact_fl,kf_contact_fr,kf_contact_hl,kf_contact_hr,"
+                  << "kf_contact_fr,kf_contact_fl,kf_contact_hr,kf_contact_hl,"
                   // 3. Adaptive Mass & CoM
                   << "est_mass_raw,est_mass_filtered,est_com_x,est_com_y,est_com_z,total_support_fz,"
                   // 4. MPC & Actual Foot Forces (Z component)
                   << "f_mpc_fr_z,f_mpc_fl_z,f_mpc_hr_z,f_mpc_hl_z,"
                   << "f_act_fr_z,f_act_fl_z,f_act_hr_z,f_act_hl_z,"
-                  << "gmo_valid,gmo_initialized,";
+                  << "gmo_valid,gmo_initialized,gmo_ready,gmo_invalid_reason,"
+                  << "gmo_samples_since_reset,gmo_reset_count,"
+                  << "grf_valid,grf_ready,grf_invalid_reason,";
         for (int i = 0; i < 18; ++i) log_file_ << "gmo_p_" << i << ',';
         for (int i = 0; i < 18; ++i) log_file_ << "gmo_p_hat_" << i << ',';
         for (int i = 0; i < 18; ++i) log_file_ << "gmo_residual_" << i << ',';
@@ -86,16 +88,23 @@ public:
         const char* axes[3] = {"x", "y", "z"};
         for (int leg = 0; leg < 4; ++leg) {
             for (int axis = 0; axis < 3; ++axis)
+                log_file_ << "gmo_force_raw_" << legs[leg] << '_' << axes[axis] << ',';
+            for (int axis = 0; axis < 3; ++axis)
                 log_file_ << "gmo_force_" << legs[leg] << '_' << axes[axis] << ',';
-            log_file_ << "gmo_force_" << legs[leg] << "_norm,";
+            log_file_ << "gmo_force_" << legs[leg] << "_norm,"
+                      << "grf_leg_valid_" << legs[leg] << ','
+                      << "grf_jacobian_quality_" << legs[leg] << ',';
         }
+        for (int leg = 0; leg < 4; ++leg)
+            log_file_ << "scheduled_contact_" << legs[leg] << ',';
         log_file_ << "gt_valid,";
         for (int leg = 0; leg < 4; ++leg) {
             log_file_ << "gt_contact_" << legs[leg] << ',';
             for (int axis = 0; axis < 3; ++axis)
                 log_file_ << "gt_force_" << legs[leg] << '_' << axes[axis] << ',';
         }
-        log_file_ << "t_est_ms,t_gmo_ms,t_grf_ms,t_mpc_ms,t_total_ms\n";
+        log_file_ << "t_est_ms,t_gmo_ms,t_grf_ms,t_evidence_p99_ms,"
+                  << "t_mpc_ms,t_total_ms\n";
     }
 
     void Log(double time_ms, const CmpcTelemetryData& telem) {
@@ -113,29 +122,41 @@ public:
         for (float value : telem.kf_rpy) line << value << ',';
         for (float value : telem.kf_omega_body) line << value << ',';
         for (float value : telem.kf_acc_body) line << value << ',';
-        line << telem.kf_contact_prob[1] << ',' << telem.kf_contact_prob[0] << ','
-             << telem.kf_contact_prob[3] << ',' << telem.kf_contact_prob[2] << ','
+        for (float value : telem.kf_contact_prob) line << value << ',';
+        line
              << telem.est_mass_raw << ',' << telem.est_mass_filtered << ',';
         for (float value : telem.est_com_body) line << value << ',';
         line << telem.total_support_force_z << ',';
         for (int leg = 0; leg < 4; ++leg) line << telem.f_mpc_des_world[leg][2] << ',';
         for (int leg = 0; leg < 4; ++leg) line << telem.f_act_est_world[leg][2] << ',';
         line << static_cast<int>(telem.gmo_valid) << ','
-             << static_cast<int>(telem.gmo_initialized) << ',';
+             << static_cast<int>(telem.gmo_initialized) << ','
+             << static_cast<int>(telem.gmo_ready) << ','
+             << static_cast<int>(telem.gmo_invalid_reason) << ','
+             << telem.gmo_samples_since_reset << ','
+             << telem.gmo_reset_count << ','
+             << static_cast<int>(telem.grf_valid) << ','
+             << static_cast<int>(telem.grf_ready) << ','
+             << static_cast<int>(telem.grf_invalid_reason) << ',';
         for (float value : telem.gmo_momentum) line << value << ',';
         for (float value : telem.gmo_momentum_hat) line << value << ',';
         for (float value : telem.gmo_residual) line << value << ',';
         for (int leg = 0; leg < 4; ++leg) {
+            for (float value : telem.gmo_force_raw_world[leg]) line << value << ',';
             for (float value : telem.gmo_force_world[leg]) line << value << ',';
-            line << telem.gmo_force_norm[leg] << ',';
+            line << telem.gmo_force_norm[leg] << ','
+                 << static_cast<int>(telem.grf_leg_valid[leg]) << ','
+                 << telem.grf_jacobian_quality[leg] << ',';
         }
+        for (float value : telem.scheduled_contact) line << value << ',';
         line << static_cast<int>(telem.gt_valid) << ',';
         for (int leg = 0; leg < 4; ++leg) {
             line << telem.gt_contact[leg] << ',';
             for (float value : telem.gt_force_world[leg]) line << value << ',';
         }
         line << telem.t_est_ms << ',' << telem.t_gmo_ms << ','
-             << telem.t_grf_ms << ',' << telem.t_mpc_ms << ','
+             << telem.t_grf_ms << ',' << telem.t_evidence_p99_ms << ','
+             << telem.t_mpc_ms << ','
              << telem.t_total_ms << '\n';
         log_file_ << line.str();
     }

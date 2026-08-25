@@ -166,7 +166,17 @@ public:
         data_json_["cmpc"]["t_est_ms"] = 0.0f;
         data_json_["cmpc"]["gmo_valid"] = false;
         data_json_["cmpc"]["gmo_initialized"] = false;
+        data_json_["cmpc"]["gmo_ready"] = false;
+        data_json_["cmpc"]["gmo_invalid_reason"] = 0;
+        data_json_["cmpc"]["gmo_samples_since_reset"] = 0;
+        data_json_["cmpc"]["gmo_reset_count"] = 0;
+        data_json_["cmpc"]["grf_valid"] = false;
+        data_json_["cmpc"]["grf_ready"] = false;
+        data_json_["cmpc"]["grf_invalid_reason"] = 0;
+        data_json_["cmpc"]["grf_leg_valid"] = std::vector<int>(4, 0);
+        data_json_["cmpc"]["grf_jacobian_quality"] = std::vector<float>(4, 0.0f);
         data_json_["cmpc"]["gmo_residual"] = std::vector<float>(18, 0.0f);
+        data_json_["cmpc"]["gmo_force_raw_world"] = std::vector<float>(12, 0.0f);
         data_json_["cmpc"]["gmo_force_world"] = std::vector<float>(12, 0.0f);
         data_json_["cmpc"]["scheduled_contact"] = std::vector<float>(4, 0.0f);
         data_json_["cmpc"]["gt_valid"] = false;
@@ -174,6 +184,7 @@ public:
         data_json_["cmpc"]["gt_force_world"] = std::vector<float>(12, 0.0f);
         data_json_["cmpc"]["t_gmo_ms"] = 0.0f;
         data_json_["cmpc"]["t_grf_ms"] = 0.0f;
+        data_json_["cmpc"]["t_evidence_p99_ms"] = 0.0f;
         data_json_["cmpc"]["t_mpc_ms"] = 0.0f;
         data_json_["cmpc"]["t_total_ms"] = 0.0f;
     }
@@ -237,19 +248,36 @@ public:
 
         data_json_["cmpc"]["gmo_valid"] = telem.gmo_valid != 0;
         data_json_["cmpc"]["gmo_initialized"] = telem.gmo_initialized != 0;
+        data_json_["cmpc"]["gmo_ready"] = telem.gmo_ready != 0;
+        data_json_["cmpc"]["gmo_invalid_reason"] = telem.gmo_invalid_reason;
+        data_json_["cmpc"]["gmo_samples_since_reset"] = telem.gmo_samples_since_reset;
+        data_json_["cmpc"]["gmo_reset_count"] = telem.gmo_reset_count;
+        data_json_["cmpc"]["grf_valid"] = telem.grf_valid != 0;
+        data_json_["cmpc"]["grf_ready"] = telem.grf_ready != 0;
+        data_json_["cmpc"]["grf_invalid_reason"] = telem.grf_invalid_reason;
         data_json_["cmpc"]["gmo_residual"] =
             std::vector<float>(telem.gmo_residual, telem.gmo_residual + 18);
         std::vector<float> gmo_force(12);
+        std::vector<float> gmo_force_raw(12);
         std::vector<float> gt_force(12);
+        std::vector<int> grf_leg_valid(4);
+        std::vector<float> grf_jacobian_quality(4);
         for (int leg = 0; leg < 4; ++leg) {
+            grf_leg_valid[leg] = telem.grf_leg_valid[leg];
+            grf_jacobian_quality[leg] = telem.grf_jacobian_quality[leg];
             for (int axis = 0; axis < 3; ++axis) {
+                gmo_force_raw[leg * 3 + axis] =
+                    telem.gmo_force_raw_world[leg][axis];
                 gmo_force[leg * 3 + axis] = telem.gmo_force_world[leg][axis];
                 gt_force[leg * 3 + axis] = telem.gt_force_world[leg][axis];
             }
         }
+        data_json_["cmpc"]["gmo_force_raw_world"] = gmo_force_raw;
         data_json_["cmpc"]["gmo_force_world"] = gmo_force;
+        data_json_["cmpc"]["grf_leg_valid"] = grf_leg_valid;
+        data_json_["cmpc"]["grf_jacobian_quality"] = grf_jacobian_quality;
         data_json_["cmpc"]["scheduled_contact"] =
-            std::vector<float>(telem.kf_contact_prob, telem.kf_contact_prob + 4);
+            std::vector<float>(telem.scheduled_contact, telem.scheduled_contact + 4);
         data_json_["cmpc"]["gt_valid"] = telem.gt_valid != 0;
         data_json_["cmpc"]["gt_contact"] =
             std::vector<float>(telem.gt_contact, telem.gt_contact + 4);
@@ -258,6 +286,7 @@ public:
         data_json_["cmpc"]["t_est_ms"] = telem.t_est_ms;
         data_json_["cmpc"]["t_gmo_ms"] = telem.t_gmo_ms;
         data_json_["cmpc"]["t_grf_ms"] = telem.t_grf_ms;
+        data_json_["cmpc"]["t_evidence_p99_ms"] = telem.t_evidence_p99_ms;
         data_json_["cmpc"]["t_mpc_ms"] = telem.t_mpc_ms;
         data_json_["cmpc"]["t_total_ms"] = telem.t_total_ms;
     }

@@ -37,6 +37,7 @@ private:
     double imu_data_[10]   = {};
     double motor_data_[36] = {};
     double vel_cmd_[3]     = {};
+    double observation_timestamp_ = -1.0;
     interface::GroundTruthContactData ground_truth_contact_;
     // Chạy TorqueCalculator mỗi `kDecimation` lần Run() (1 = mỗi tick)
     static constexpr int kDecimation = 1;
@@ -145,15 +146,18 @@ private:
             if (cnt >= 0 && cnt % kDecimation == 0 && cnt != run_cnt_record) {
                 // Lấy bản sao quan sát + lệnh vận tốc đồng bộ hoàn toàn (Atomic Snapshot)
                 double imu[10], motor[36], vel[3], effort[12] = {};
+                double observation_timestamp = -1.0;
                 interface::GroundTruthContactData ground_truth;
                 {
                     std::lock_guard<std::mutex> lk(data_mtx_);
                     std::memcpy(imu,   imu_data_,   sizeof(imu));
                     std::memcpy(motor, motor_data_, sizeof(motor));
                     std::memcpy(vel,   vel_cmd_,    sizeof(vel));
+                    observation_timestamp = observation_timestamp_;
                     ground_truth = ground_truth_contact_;
                 }
                 gait_ctrl_->SetRobotVel(vel);
+                gait_ctrl_->SetObservationTimestamp(observation_timestamp);
                 CmpcTelemetryData telem = {};
                 gait_ctrl_->TorqueCalculator(imu, motor, effort, &telem);
                 telem.gt_valid = static_cast<uint8_t>(ground_truth.valid);
@@ -219,7 +223,16 @@ public:
         blend_start_steady_time_  = std::chrono::steady_clock::now();
 
         double pidParam[4] = {kStandKp, kStandKd, kJointKp, kJointKd};
-        gait_ctrl_ = std::make_unique<CMPCBridge>(freq, pidParam);
+        GMOConfig gmo_config;
+        gmo_config.enabled = true;
+        gmo_config.gain = 30.0;
+        gmo_config.force_damping = 1e-4;
+        gmo_config.warmup_samples = 100;           // 100 ms at 1 kHz
+        gmo_config.force_filter_cutoff_hz = 50.0;
+        gmo_config.max_abs_force_n = 1000.0;
+        gmo_config.min_jacobian_quality = 1e-3;
+        gmo_config.max_sample_gap_s = 0.01;
+        gait_ctrl_ = std::make_unique<CMPCBridge>(freq, pidParam, gmo_config);
         gait_ctrl_->SetGaitType(0);   // 0 = trot
         // gait_ctrl_->SetGaitType(10);   // 10 = walking
         gait_ctrl_->SetRobotMode(0);  // 0 = follow user velocity command
@@ -255,6 +268,7 @@ public:
             BuildImuData(imu_data_);
             BuildMotorData(motor_data_);
             BuildVelocityCommand(vel_cmd_);
+            observation_timestamp_ = run_time_;
             ground_truth_contact_ = ri_ptr_->GetGroundTruthContactData();
         }
         ++state_run_cnt_;
