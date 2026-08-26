@@ -48,7 +48,6 @@ private:
     std::shared_ptr<UserCommandInterface> uc_ptr_;
     std::shared_ptr<RobotInterface> ri_ptr_;
     std::shared_ptr<ControlParameters> cp_ptr_;
-    std::shared_ptr<RobotModel> robot_model_ptr_;
     std::shared_ptr<DataStreaming> ds_ptr_;
 
     void GetDataStreaming(){
@@ -139,24 +138,10 @@ public:
             std::cerr << "error" << std::endl;
         }
 
-        // ── Khởi tạo RobotModel ──
-        {
-            robot_model_ptr_ = std::make_shared<RobotModel>();
-            RobotModelConfig cfg;
-            cfg.urdf_path = urdf_path;
-            std::string err;
-            if (!robot_model_ptr_->build(cfg, &err)) {
-                std::cerr << "[RobotModel] build failed: " << err << std::endl;
-            } else {
-                std::cout << "[RobotModel] built successfully" << std::endl;
-            }
-        }
-
         std::shared_ptr<ControllerData> data_ptr = std::make_shared<ControllerData>();
         data_ptr->ri_ptr = ri_ptr_;
         data_ptr->uc_ptr = uc_ptr_;
         data_ptr->cp_ptr = cp_ptr_;
-        data_ptr->robot_model_ptr = robot_model_ptr_;
         ds_ptr_ = std::make_shared<DataStreaming>(false, false);
         data_ptr->ds_ptr = ds_ptr_;
 

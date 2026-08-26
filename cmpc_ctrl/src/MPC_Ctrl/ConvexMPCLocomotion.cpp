@@ -901,7 +901,7 @@ void ConvexMPCLocomotion::initSparseMPC()
 {
     Mat3<double> baseInertia;
     baseInertia << 0.07, 0, 0, 0, 0.26, 0, 0, 0, 0.242;
-    double mass = 9;
+    double mass = 11.9376; // Lite3 total mass synced with Pinocchio/RobotModel
     double maxForce = 100; // Fz tối đa mỗi chân [N], khớp với setup_problem ở dense MPC
 
     std::vector<double> dtTraj;

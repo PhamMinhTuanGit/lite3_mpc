@@ -92,6 +92,7 @@ include_directories(
   interface/user_command
   state_machine
   robot_model
+  wbic
   # ${TORCH_INCLUDE_DIRS}
   ${ONNX_RUNTIME_ROOT}/include
   ${MUJOCO_ROOT}/include
@@ -131,6 +132,9 @@ set(CMPC_SRCS
   cmpc_ctrl/src/MPC_Ctrl/SolverMPC.cpp
   cmpc_ctrl/src/MPC_Ctrl/RobotState.cpp
   robot_model/RobotModel.cpp
+  wbic/KinWbc.cpp
+  wbic/WbicQp.cpp
+  wbic/WbicController.cpp
 )
 
 # ========== 仿真器宏定义 ==========
@@ -331,18 +335,151 @@ if(BUILD_TESTS)
   # 4. WBIC fixed-size input contracts and validation
   add_executable(wbic_types_smoke
     tests/wbic_types_smoke.cpp
-    cmpc_ctrl/src/Pinocchio_Dynamics/Lite3DynamicModel.cpp
+    robot_model/RobotModel.cpp
   )
   target_include_directories(wbic_types_smoke PRIVATE
     ${THIRD_PARTY}/boost_1_84_0
     ${THIRD_PARTY}
     ${THIRD_PARTY}/eigen
     /usr/include/eigen3
-    cmpc_ctrl/src/Pinocchio_Dynamics/include
+    robot_model
     wbic
   )
   target_link_libraries(wbic_types_smoke
     -lpthread -lm -lrt -ldl -lstdc++
   )
   add_test(NAME wbic_types_smoke COMMAND wbic_types_smoke)
+
+  # 5. WBIC Pinocchio dynamics verification
+  add_executable(wbic_dynamics_smoke
+    tests/wbic_dynamics_smoke.cpp
+    robot_model/RobotModel.cpp
+  )
+  target_include_directories(wbic_dynamics_smoke PRIVATE
+    ${THIRD_PARTY}/boost_1_84_0
+    ${THIRD_PARTY}
+    ${THIRD_PARTY}/eigen
+    /usr/include/eigen3
+    robot_model
+    wbic
+  )
+  target_link_libraries(wbic_dynamics_smoke
+    -lpthread -lm -lrt -ldl -lstdc++
+  )
+  add_test(NAME wbic_dynamics_smoke COMMAND wbic_dynamics_smoke)
+
+  # 6. WBIC Hierarchical KinWBC test
+  add_executable(wbic_kin_smoke
+    tests/wbic_kin_smoke.cpp
+    robot_model/RobotModel.cpp
+    wbic/KinWbc.cpp
+  )
+  target_include_directories(wbic_kin_smoke PRIVATE
+    ${THIRD_PARTY}/boost_1_84_0
+    ${THIRD_PARTY}
+    ${THIRD_PARTY}/eigen
+    /usr/include/eigen3
+    robot_model
+    wbic
+  )
+  target_link_libraries(wbic_kin_smoke
+    -lpthread -lm -lrt -ldl -lstdc++
+  )
+  add_test(NAME wbic_kin_smoke COMMAND wbic_kin_smoke)
+
+  # 7. WBIC Reduced 18-variable QP test
+  add_executable(wbic_qp_smoke
+    tests/wbic_qp_smoke.cpp
+    robot_model/RobotModel.cpp
+    wbic/KinWbc.cpp
+    wbic/WbicQp.cpp
+  )
+  target_include_directories(wbic_qp_smoke PRIVATE
+    ${THIRD_PARTY}/boost_1_84_0
+    ${THIRD_PARTY}
+    ${THIRD_PARTY}/eigen
+    /usr/include/eigen3
+    cmpc_ctrl/src/qpOASES/include
+    robot_model
+    wbic
+  )
+  target_link_libraries(wbic_qp_smoke
+    qpOASES
+    -lpthread -lm -lrt -ldl -lstdc++
+  )
+  add_test(NAME wbic_qp_smoke COMMAND wbic_qp_smoke)
+
+  # 8. WBIC Sentinel mapping test
+  add_executable(wbic_mapping_smoke
+    tests/wbic_mapping_smoke.cpp
+    robot_model/RobotModel.cpp
+    wbic/KinWbc.cpp
+    wbic/WbicQp.cpp
+    wbic/WbicController.cpp
+  )
+  target_include_directories(wbic_mapping_smoke PRIVATE
+    ${THIRD_PARTY}/boost_1_84_0
+    ${THIRD_PARTY}
+    ${THIRD_PARTY}/eigen
+    /usr/include/eigen3
+    cmpc_ctrl/src/qpOASES/include
+    robot_model
+    wbic
+  )
+  target_link_libraries(wbic_mapping_smoke
+    qpOASES
+    -lpthread -lm -lrt -ldl -lstdc++
+  )
+  add_test(NAME wbic_mapping_smoke COMMAND wbic_mapping_smoke)
+
+  # 9. WBIC Safety & Benchmark test
+  add_executable(wbic_safety_benchmark_smoke
+    tests/wbic_safety_benchmark_smoke.cpp
+    robot_model/RobotModel.cpp
+    wbic/KinWbc.cpp
+    wbic/WbicQp.cpp
+    wbic/WbicController.cpp
+  )
+  target_include_directories(wbic_safety_benchmark_smoke PRIVATE
+    ${THIRD_PARTY}/boost_1_84_0
+    ${THIRD_PARTY}
+    ${THIRD_PARTY}/eigen
+    /usr/include/eigen3
+    cmpc_ctrl/src/qpOASES/include
+    robot_model
+    wbic
+  )
+  target_link_libraries(wbic_safety_benchmark_smoke
+    qpOASES
+    -lpthread -lm -lrt -ldl -lstdc++
+  )
+  add_test(NAME wbic_safety_benchmark_smoke COMMAND wbic_safety_benchmark_smoke)
+
+  # 10. WBIC CMPC End-to-End Integration test
+  add_executable(wbic_integration_smoke
+    tests/wbic_integration_smoke.cpp
+    ${CMPC_SRCS}
+  )
+  target_include_directories(wbic_integration_smoke PRIVATE
+    ${THIRD_PARTY}/boost_1_84_0
+    ${THIRD_PARTY}
+    ${THIRD_PARTY}/eigen
+    /usr/include/eigen3
+    cmpc_ctrl/src
+    cmpc_ctrl/src/StateEstimator
+    cmpc_ctrl/src/JCQP
+    cmpc_ctrl/src/JCQP/amd/include
+    cmpc_ctrl/src/osqp/include
+    cmpc_ctrl/src/qpOASES/include
+    cmpc_ctrl/src/Utilities
+    robot_model
+    wbic
+  )
+  target_link_libraries(wbic_integration_smoke
+    JCQP
+    qpOASES
+    osqpstatic
+    -lpthread -lm -lrt -ldl -lstdc++
+  )
+  add_test(NAME wbic_integration_smoke COMMAND wbic_integration_smoke)
 endif()

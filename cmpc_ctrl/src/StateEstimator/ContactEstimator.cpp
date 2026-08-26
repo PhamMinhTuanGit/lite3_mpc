@@ -6,4 +6,4 @@
  * estimator.  This will need to change once we move contact detection to C++
  */
 
-#include "Controllers/ContactEstimator.h"
+#include "ContactEstimator.h"

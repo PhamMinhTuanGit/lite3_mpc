@@ -17,7 +17,6 @@
 #include "data_streaming.hpp"
 #include "basic_function.hpp"
 #include "parameters/control_parameters.h"
-#include "RobotModel.hpp"
 
 using namespace types;
 using namespace interface;
@@ -28,7 +27,6 @@ struct ControllerData{
     std::shared_ptr<UserCommandInterface> uc_ptr;
     std::shared_ptr<ControlParameters> cp_ptr;
     std::shared_ptr<DataStreaming> ds_ptr;
-    std::shared_ptr<RobotModel> robot_model_ptr;
 };
 
 

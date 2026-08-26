@@ -1,31 +1,101 @@
-// Compiled in isolation to avoid name conflicts with the main project.
-// GaitCtrller.h defines extern "C" functions inline, so it must be included in
-// exactly one TU (GaitCtrller.cpp already does).  Here we only forward-declare
-// those functions to resolve them via normal linking.
 #include "cmpc_bridge.h"
-#include <cstring>
+#include "GaitCtrller.h"
 
-struct JointEff { double eff[12]; };
+class CMPCBridge::Impl {
+public:
+    explicit Impl(double freq, double* pidParam4, bool wbic_enabled)
+        : controller_(std::make_unique<GaitCtrller>(freq, pidParam4, wbic_enabled))
+    {
+    }
 
-extern "C" {
-    void init_controller(double freq, double pidParam[]);
-    void set_gait_type(int gaitType);
-    void set_robot_mode(int mode);
-    void set_robot_vel(double vel[]);
-    JointEff* torque_calculator(double imuData[], double motorData[]);
-}
+    void SetGaitType(int gaitType)
+    {
+        if (controller_) controller_->SetGaitType(gaitType);
+    }
 
-CMPCBridge::CMPCBridge(double freq, double* pidParam4) {
-    init_controller(freq, pidParam4);
+    void SetRobotMode(int mode)
+    {
+        if (controller_) controller_->SetRobotMode(mode);
+    }
+
+    void SetRobotVel(double* vel3)
+    {
+        if (controller_) controller_->SetRobotVel(vel3);
+    }
+
+    void SetWbicEnabled(bool enabled)
+    {
+        if (controller_) controller_->SetWbicEnabled(enabled);
+    }
+
+    bool IsWbicEnabled() const
+    {
+        return controller_ ? controller_->IsWbicEnabled() : false;
+    }
+
+    void Reset()
+    {
+        if (controller_) controller_->Reset();
+    }
+
+    void TorqueCalculator(double* imuData10,
+                          double* motorData24,
+                          double* effort12,
+                          wbic::JointHybridCommand* hybridCmd)
+    {
+        if (controller_) {
+            controller_->TorqueCalculator(imuData10, motorData24, effort12, hybridCmd);
+        }
+    }
+
+private:
+    std::unique_ptr<GaitCtrller> controller_;
+};
+
+CMPCBridge::CMPCBridge(double freq, double* pidParam4, bool wbic_enabled)
+    : impl_(std::make_unique<Impl>(freq, pidParam4, wbic_enabled))
+{
 }
 
 CMPCBridge::~CMPCBridge() = default;
 
-void CMPCBridge::SetGaitType(int g) { set_gait_type(g); }
-void CMPCBridge::SetRobotMode(int m) { set_robot_mode(m); }
-void CMPCBridge::SetRobotVel(double* v) { set_robot_vel(v); }
+CMPCBridge::CMPCBridge(CMPCBridge&&) noexcept = default;
+CMPCBridge& CMPCBridge::operator=(CMPCBridge&&) noexcept = default;
 
-void CMPCBridge::TorqueCalculator(double* imu, double* motor, double* effort) {
-    JointEff* res = torque_calculator(imu, motor);
-    std::memcpy(effort, res->eff, 12 * sizeof(double));
+void CMPCBridge::SetGaitType(int gaitType)
+{
+    if (impl_) impl_->SetGaitType(gaitType);
+}
+
+void CMPCBridge::SetRobotMode(int mode)
+{
+    if (impl_) impl_->SetRobotMode(mode);
+}
+
+void CMPCBridge::SetRobotVel(double* vel3)
+{
+    if (impl_) impl_->SetRobotVel(vel3);
+}
+
+void CMPCBridge::SetWbicEnabled(bool enabled)
+{
+    if (impl_) impl_->SetWbicEnabled(enabled);
+}
+
+bool CMPCBridge::IsWbicEnabled() const
+{
+    return impl_ ? impl_->IsWbicEnabled() : false;
+}
+
+void CMPCBridge::Reset()
+{
+    if (impl_) impl_->Reset();
+}
+
+void CMPCBridge::TorqueCalculator(double* imuData10,
+                                  double* motorData24,
+                                  double* effort12,
+                                  wbic::JointHybridCommand* hybridCmd)
+{
+    if (impl_) impl_->TorqueCalculator(imuData10, motorData24, effort12, hybridCmd);
 }

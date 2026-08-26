@@ -7,7 +7,7 @@
  *  - foot positions/velocities in body/world frame
  */
 
-#include "Controllers/PositionVelocityEstimator.h"
+#include "PositionVelocityEstimator.h"
 
 #include <fstream>
 
@@ -94,8 +94,11 @@ template <typename T>
 void LinearKFPositionVelocityEstimator<T>::setup()
 {
     // ── Timestep ───────────────────────────────────────────────────────────
-    // dt = 1ms, tương ứng với tần số control loop 1kHz
-    T dt = 0.001; // 1kHz (kiểm tra tại `CmpcRunner()`~`state_machine/cmpc_state.hpp`)
+    T dt = 0.002; // default 500Hz
+    if (this->_stateEstimatorData.parameters != nullptr &&
+        this->_stateEstimatorData.parameters->controller_dt > 0.0) {
+        dt = static_cast<T>(this->_stateEstimatorData.parameters->controller_dt);
+    }
 
     // ── Khởi tạo state vector và foot positions về 0 ──────────────────────
     _xhat.setZero(); // state estimate [p; v; pf_FL; pf_FR; pf_HL; pf_HR]

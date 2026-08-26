@@ -20,8 +20,7 @@ class RobotState
         Matrix<fpt,3,3> I_body;  //机身坐标系下的惯量矩阵
         Quaternionf q;           //四元素表示的世界坐标系下的旋转
         fpt yaw;                 //偏航角
-        fpt m = 9;               //机器人质量
-        //fpt m = 50.236; //DH
+        fpt m = 11.9376;         //机器人质量 (Lite3 total mass synced with Pinocchio/RobotModel)
     //private:
 };
 #endif

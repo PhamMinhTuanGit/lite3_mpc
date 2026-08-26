@@ -1,6 +1,6 @@
 /**
  * @file cmpc_state.hpp
- * @brief Quadruped robot walking via Convex MPC (MIT Cheetah controller)
+ * @brief Quadruped robot walking via Convex MPC + WBIC
  */
 
 #ifndef CMPC_HPP_
@@ -10,40 +10,56 @@
 #include <mutex>
 #include <atomic>
 #include <cstring>
+#include <chrono>
 
 #include "state_base.h"
 #include "cmpc_bridge.h"
+#include "WbcType.h"
 
 class CMPCState : public StateBase {
 private:
     std::unique_ptr<CMPCBridge> gait_ctrl_;
-    Eigen::Matrix<float, 12, 5> joint_cmd_;
     double run_time_ = 0.0;
     double time_stamp_record_ = 0.0;
 
-    
-    
-    // ── Worker thread (giống PolicyRunner trong rl_control_state) ──────────
+    // ── Worker thread (500 Hz, dt = 0.002s) ──────────────────────────────────
     std::thread       cmpc_thread_;
     std::atomic<bool> start_flag_{false};
     std::atomic<int>  state_run_cnt_{-1};
-    std::mutex        data_mtx_;
-    // Bộ đệm quan sát: Run() (vòng FSM) ghi, thread nền đọc
+
+    // Observation Buffer: FSM thread writes, Worker thread reads
+    std::mutex        obs_mtx_;
     double imu_data_[10]   = {};
     double motor_data_[24] = {};
-    // Chạy TorqueCalculator mỗi `kDecimation` lần Run() (1 = mỗi tick)
-    static constexpr int kDecimation = 1;
+    double user_vel_[3]    = {};
+
+    // Command Double-Buffer: Worker thread writes, FSM thread reads
+    std::mutex        cmd_mtx_;
+    struct CommandSnapshot {
+        Eigen::Matrix<float, 12, 5> joint_cmd = Eigen::Matrix<float, 12, 5>::Zero();
+        double timestamp = 0.0;
+        uint64_t sequence = 0;
+        bool valid = false;
+    } latest_cmd_;
 
     // Must match the simulation YAML config (freq tuning for MPC timestep)
-    static constexpr double freq       = 500.0; // freq
+    static constexpr double freq       = 500.0; // 500 Hz
+    static constexpr double kDt        = 1.0 / freq; // 0.002 s
     static constexpr double kStandKp   = 100.0;
     static constexpr double kStandKd   = 1.0;
     static constexpr double kJointKp   = 0.0;
     static constexpr double kJointKd   = 0.05;
 
+    // Default WBIC policy: enabled in simulation, disabled by default on hardware
+#ifdef BUILD_SIMULATION
+    static constexpr bool kDefaultWbicEnabled = true;
+#else
+    static constexpr bool kDefaultWbicEnabled = false;
+#endif
+
     // ri_ptr_ joint order: [FL, FR, HL, HR]
     // GaitCtrller order:   [FR, FL, HR, HL]
-    static constexpr int kLegRemap[4] = {1, 0, 3, 2}; // cmpc_leg → ri_leg index
+    static constexpr int kCmpcToRiLeg[4] = {1, 0, 3, 2}; // cmpc_leg → ri_leg index
 
     void BuildImuData(double* imuData) {
         Vec3f acc = ri_ptr_->GetImuAcc();
@@ -74,8 +90,6 @@ private:
         VecXf q  = ri_ptr_->GetJointPosition();
         VecXf qd = ri_ptr_->GetJointVelocity();
 
-        // GaitCtrller leg 0=FR, 1=FL, 2=HR, 3=HL
-        // ri_ptr_ leg   0=FL, 1=FR, 2=HL, 3=HR   (each leg occupies 3 joints)
         const int ri_order[4] = {1, 0, 3, 2}; // cmpc leg i → ri_ptr_ leg ri_order[i]
         for (int i = 0; i < 4; i++) {
             int ri_leg = ri_order[i];
@@ -86,76 +100,57 @@ private:
         }
     }
 
-    // ── Cập nhật RobotModel từ imu_data_ + motor_data_ (đã build ở Run(), trong mutex) ──
-    void BuildRobotModelState() {
-        // imu_data_ = [accX,accY,accZ, qx,qy,qz,qw, omgX,omgY,omgZ]
-        Eigen::Quaterniond quat(
-            imu_data_[6],   // w
-            imu_data_[3],   // x
-            imu_data_[4],   // y
-            imu_data_[5]    // z
-        );
-        Vec3 omega_world(imu_data_[7], imu_data_[8], imu_data_[9]);
-
-        // motor_data_[ 0..11] = pos [FR,FL,HR,HL] = RobotModel order
-        // motor_data_[12..23] = vel
-        Vec12 q, dq;
-        for (int i = 0; i < 12; ++i) {
-            q[i]  = motor_data_[i];         // pos
-            dq[i] = motor_data_[12 + i];    // vel
-        }
-
-        const Vec3 p_world = Vec3::Zero();    // cần state estimator → tạm 0
-        const Vec3 v_lin   = Vec3::Zero();     // cần state estimator → tạm 0
-
-        auto& rm = *data_ptr_->robot_model_ptr;
-        rm.setState(p_world, quat, v_lin, omega_world, q, dq);
-        rm.update();   // M, h, Jc, J̇v ready
-    }
-
-    // Map effort for each leg from GaitCtrller [FR,FL,HR,HL] → joint_cmd_ [FL,FR,HL,HR]
-    void ApplyEffort(const double* effort) {
-        joint_cmd_.setZero();
-        const int ri_order[4] = {1, 0, 3, 2};
-        for (int i = 0; i < 4; i++) {
-            int ri_leg = ri_order[i];
-            for (int j = 0; j < 3; j++) {
-                joint_cmd_(ri_leg * 3 + j, 4) = static_cast<float>(effort[i * 3 + j]);
-            }
-        }
-        ri_ptr_->SetJointCommand(joint_cmd_);  // gửi full torque (ko phân ra swing(position) và stance (torque))
-    }
-
-    void UpdateVelocityCommand() {
+    void BuildUserVelocity(double* vel) {
         auto cmd = uc_ptr_->GetUserCommand();
-        double vel[3] = {
-            cmd.forward_vel_scale  * 1.0,   // vx: max 3 m/s
-            cmd.side_vel_scale     * 1.0,   // vy: max 2 m/s
-            cmd.turnning_vel_scale * 1.0    // yaw rate: max 2.5 rad/s
-        };
-        // std::cout << "vel :" << vel[0] << " ; " << vel[1] << " ; " << vel[2] << std::endl;
-        gait_ctrl_->SetRobotVel(vel);
+        vel[0] = cmd.forward_vel_scale  * 1.0;   // vx: max 3 m/s
+        vel[1] = cmd.side_vel_scale     * 1.0;   // vy: max 2 m/s
+        vel[2] = cmd.turnning_vel_scale * 1.0;   // yaw rate: max 2.5 rad/s
     }
 
-    
-
-
-
-    // Thread nền: chạy bộ điều khiển nặng (TorqueCalculator) độc lập với vòng FSM
+    // Worker thread: executes heavy CMPC + WBIC at 500 Hz
     void CmpcRunner() {
         int run_cnt_record = -1;
+        uint64_t worker_seq = 0;
+
         while (start_flag_) {
             int cnt = state_run_cnt_.load();
-            if (cnt >= 0 && cnt % kDecimation == 0 && cnt != run_cnt_record) {
-                // Lấy bản sao quan sát mới nhất (tránh đọc rách giữa lúc Run() ghi)
-                double imu[10], motor[24], effort[12] = {};
+            if (cnt >= 0 && cnt != run_cnt_record) {
+                double imu[10], motor[24], vel[3], effort[12] = {};
                 {
-                    std::lock_guard<std::mutex> lk(data_mtx_);
+                    std::lock_guard<std::mutex> lk(obs_mtx_);
                     std::memcpy(imu,   imu_data_,   sizeof(imu));
                     std::memcpy(motor, motor_data_, sizeof(motor));
+                    std::memcpy(vel,   user_vel_,   sizeof(vel));
                 }
-                gait_ctrl_->TorqueCalculator(imu, motor, effort);
-                ApplyEffort(effort);
+
+                gait_ctrl_->SetRobotVel(vel);
+
+                wbic::JointHybridCommand hybrid_cmd;
+                gait_ctrl_->TorqueCalculator(imu, motor, effort, &hybrid_cmd);
+
+                // Remap hybrid command [FR, FL, HR, HL] → RI [FL, FR, HL, HR]
+                Eigen::Matrix<float, 12, 5> joint_cmd;
+                joint_cmd.setZero();
+
+                for (int cmpc_leg = 0; cmpc_leg < 4; ++cmpc_leg) {
+                    const int ri_leg = kCmpcToRiLeg[cmpc_leg];
+                    for (int j = 0; j < 3; ++j) {
+                        joint_cmd(ri_leg * 3 + j, 0) = static_cast<float>(hybrid_cmd.kp[cmpc_leg * 3 + j]);
+                        joint_cmd(ri_leg * 3 + j, 1) = static_cast<float>(hybrid_cmd.q_des[cmpc_leg * 3 + j]);
+                        joint_cmd(ri_leg * 3 + j, 2) = static_cast<float>(hybrid_cmd.kd[cmpc_leg * 3 + j]);
+                        joint_cmd(ri_leg * 3 + j, 3) = static_cast<float>(hybrid_cmd.qd_des[cmpc_leg * 3 + j]);
+                        joint_cmd(ri_leg * 3 + j, 4) = static_cast<float>(hybrid_cmd.tau_ff[cmpc_leg * 3 + j]);
+                    }
+                }
+
+                {
+                    std::lock_guard<std::mutex> lk(cmd_mtx_);
+                    latest_cmd_.joint_cmd = joint_cmd;
+                    latest_cmd_.timestamp = ri_ptr_->GetInterfaceTimeStamp();
+                    latest_cmd_.sequence = ++worker_seq;
+                    latest_cmd_.valid = true;
+                }
+
                 run_cnt_record = cnt;
             }
             std::this_thread::sleep_for(std::chrono::microseconds(100));
@@ -166,7 +161,7 @@ public:
     CMPCState(const RobotType& robot_type, const std::string& state_name,
               std::shared_ptr<ControllerData> data_ptr)
         : StateBase(robot_type, state_name, data_ptr) {}
-    ~CMPCState() {}
+    ~CMPCState() = default;
 
     virtual void OnEnter() override {
         StateBase::msfb_.UpdateCurrentState(RobotMotionState::CMPC);
@@ -176,12 +171,19 @@ public:
         time_stamp_record_ = run_time_;
 
         double pidParam[4] = {kStandKp, kStandKd, kJointKp, kJointKd};
-        gait_ctrl_ = std::make_unique<CMPCBridge>(freq, pidParam);
+        gait_ctrl_ = std::make_unique<CMPCBridge>(freq, pidParam, kDefaultWbicEnabled);
         gait_ctrl_->SetGaitType(0);   // 0 = trot
-        // gait_ctrl_->SetGaitType(10);   // 10 = walking
         gait_ctrl_->SetRobotMode(0);  // 0 = follow user velocity command
+        gait_ctrl_->Reset();
 
-        // Khởi động thread nền SAU khi gait_ctrl_ đã sẵn sàng
+        {
+            std::lock_guard<std::mutex> lk(cmd_mtx_);
+            latest_cmd_.joint_cmd.setZero();
+            latest_cmd_.timestamp = run_time_;
+            latest_cmd_.sequence = 0;
+            latest_cmd_.valid = false;
+        }
+
         state_run_cnt_ = -1;
         start_flag_    = true;
         cmpc_thread_   = std::thread(std::bind(&CMPCState::CmpcRunner, this));
@@ -197,25 +199,42 @@ public:
     virtual void Run() override {
         run_time_ = ri_ptr_->GetInterfaceTimeStamp();
 
-        // Vòng FSM chỉ cập nhật quan sát + tăng bộ đếm (nhẹ);
-        // tính mô-men nặng do CmpcRunner() lo ở thread riêng.
+        // 1. Update observation buffer
         {
-            std::lock_guard<std::mutex> lk(data_mtx_);
+            std::lock_guard<std::mutex> lk(obs_mtx_);
             BuildImuData(imu_data_);
             BuildMotorData(motor_data_);
-            // RobotModel được cập nhật ngay sau sensor data, trong cùng lock
-            // để thread nền CmpcRunner() luôn thấy model đồng bộ với sensor.
-            BuildRobotModelState();
+            BuildUserVelocity(user_vel_);
         }
-        UpdateVelocityCommand();
         ++state_run_cnt_;
+
+        // 2. Fetch and apply latest joint command (FSM thread is sole caller of SetJointCommand)
+        CommandSnapshot cmd_snap;
+        {
+            std::lock_guard<std::mutex> lk(cmd_mtx_);
+            cmd_snap = latest_cmd_;
+        }
+
+        // Staleness check: if command older than 3 control periods (6 ms), output safe damping
+        const double cmd_age = run_time_ - cmd_snap.timestamp;
+        if (cmd_snap.valid && cmd_age <= 3.0 * kDt) {
+            ri_ptr_->SetJointCommand(cmd_snap.joint_cmd);
+        } else {
+            // Safe damping command
+            Eigen::Matrix<float, 12, 5> safe_cmd;
+            safe_cmd.setZero();
+            for (int k = 0; k < 12; ++k) {
+                safe_cmd(k, 2) = 1.0f; // Kd = 1.0 damping
+            }
+            ri_ptr_->SetJointCommand(safe_cmd);
+        }
     }
 
     virtual bool LoseControlJudge() override {
         if (uc_ptr_->GetUserCommand().target_mode == int(RobotMotionState::JointDamping))
             return true;
         Vec3f rpy = ri_ptr_->GetImuRpy();
-        if (fabs(rpy(0)) > 25. / 180 * M_PI || fabs(rpy(1)) > 30. / 180 * M_PI) {
+        if (std::abs(rpy(0)) > 25. / 180 * M_PI || std::abs(rpy(1)) > 30. / 180 * M_PI) {
             std::cout << "posture value: " << 180. / M_PI * rpy.transpose() << std::endl;
             return true;
         }
