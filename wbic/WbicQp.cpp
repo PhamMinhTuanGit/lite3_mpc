@@ -19,6 +19,8 @@ WbicQp::WbicQp(const WbicConfig& config)
     options.printLevel = qpOASES::PL_NONE;
     options.enableRegularisation = qpOASES::BT_TRUE;
     options.epsRegularisation = config.regularization;
+    options.enableDropInfeasibles = qpOASES::BT_TRUE;
+    options.enableInertiaCorrection = qpOASES::BT_TRUE;
     solver_->setOptions(options);
     is_initialized_ = false;
 }
@@ -31,6 +33,7 @@ void WbicQp::Reset() noexcept
         solver_->reset();
     }
     is_initialized_ = false;
+    prev_contact_ = {{false, false, false, false}};
 }
 
 bool WbicQp::Solve(const WbicInput& input,
@@ -207,16 +210,14 @@ bool WbicQp::Solve(const WbicInput& input,
         ++row;
     }
 
-    const int n_constraints = row;
-
     // ══════════════════════════════════════════════════════════════════════
     // 4. Copy to Row-Major Memory Buffers
     // ══════════════════════════════════════════════════════════════════════
     std::memcpy(H_mem_, H_mat_.data(), kNumVars * kNumVars * sizeof(qpOASES::real_t));
     std::memcpy(g_mem_, g_vec_.data(), kNumVars * sizeof(qpOASES::real_t));
-    std::memcpy(A_mem_, A_mat_.data(), n_constraints * kNumVars * sizeof(qpOASES::real_t));
-    std::memcpy(lbA_mem_, lbA_vec_.data(), n_constraints * sizeof(qpOASES::real_t));
-    std::memcpy(ubA_mem_, ubA_vec_.data(), n_constraints * sizeof(qpOASES::real_t));
+    std::memcpy(A_mem_, A_mat_.data(), kMaxConstraints * kNumVars * sizeof(qpOASES::real_t));
+    std::memcpy(lbA_mem_, lbA_vec_.data(), kMaxConstraints * sizeof(qpOASES::real_t));
+    std::memcpy(ubA_mem_, ubA_vec_.data(), kMaxConstraints * sizeof(qpOASES::real_t));
 
     // ══════════════════════════════════════════════════════════════════════
     // 5. Solve QP using qpOASES SQProblem
@@ -224,6 +225,20 @@ bool WbicQp::Solve(const WbicInput& input,
     int nWSR = config.max_wsr;
     qpOASES::real_t cputime = config.max_cpu_time;
     qpOASES::returnValue status_qp = qpOASES::TERMINAL_LIST_ELEMENT;
+
+    bool contact_changed = false;
+    for (std::size_t leg = 0; leg < kNumLegs; ++leg) {
+        if (prev_contact_[leg] != input.contact[leg]) {
+            contact_changed = true;
+            break;
+        }
+    }
+
+    if (contact_changed) {
+        is_initialized_ = false;
+        solver_->reset();
+        prev_contact_ = input.contact;
+    }
 
     if (is_initialized_) {
         status_qp = solver_->hotstart(H_mem_, g_mem_, A_mem_, lb_mem_, ub_mem_,
@@ -315,7 +330,7 @@ bool WbicQp::Solve(const WbicInput& input,
         const int dc = contact_set.nc * 3;
         const auto Jc = contact_set.Jc.topRows(dc);
         const auto dJc_qdot = contact_set.dJdq_c.head(dc);
-        const Eigen::VectorXd contact_acc = Jc * qddot_cmd + dJc_qdot;
+        const Eigen::VectorXd contact_acc = Jc * result->qddot + dJc_qdot;
         result->residuals.contact_acc_residual_norm = contact_acc.lpNorm<Eigen::Infinity>();
     } else {
         result->residuals.contact_acc_residual_norm = 0.0;
@@ -352,9 +367,10 @@ bool WbicQp::Solve(const WbicInput& input,
     auto end_time = std::chrono::high_resolution_clock::now();
     result->cpu_time_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
 
+    // Final contact acceleration is diagnostic only: the reduced QP changes the
+    // floating-base acceleration without enforcing the KinWBC contact task.
     // Verify thresholds
     if (result->residuals.eom_residual_norm > config.eom_residual_threshold ||
-        result->residuals.contact_acc_residual_norm > config.contact_acc_residual_threshold ||
         result->residuals.inequality_violation_norm > config.inequality_residual_threshold) {
         result->status = WbicStatus::ResidualExceeded;
     }

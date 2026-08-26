@@ -535,8 +535,10 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
         float contactState = contactStates[foot];
         float swingState = swingStates[foot];
 
-        if (swingState > 0) // foot is in swing
+        if (swingState > 0.0f) // foot is in swing
         {
+            planned_contact[foot] = false;
+
             if (firstSwing[foot])
             {
                 firstSwing[foot] = false;
@@ -559,7 +561,6 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
             pFoot_des[foot] = pDesFootWorld;
             vFoot_des[foot] = vDesFootWorld;
             aFoot_des[foot] = footSwingTrajectories[foot].getAcceleration();
-
             if (!use_wbc)
             {
                 // Update leg control command regardless of the usage of WBIC
@@ -579,13 +580,19 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
         }
         else // foot is in stance
         {
+            planned_contact[foot] = true;
             firstSwing[foot] = true;
 
-            Vec3<float> pDesFootWorld = footSwingTrajectories[foot].getPosition();
-            Vec3<float> vDesFootWorld = footSwingTrajectories[foot].getVelocity();
+            Vec3<float> pDesFootWorld = pFoot[foot];
+            Vec3<float> vDesFootWorld = Vec3<float>::Zero();
             Vec3<float> pDesLeg =
                 seResult.rBody * (pDesFootWorld - seResult.position) - _quadruped.getHipLocation(foot);
             Vec3<float> vDesLeg = seResult.rBody * (vDesFootWorld - seResult.vWorld);
+
+            // Update for WBC
+            pFoot_des[foot] = pDesFootWorld;
+            vFoot_des[foot] = vDesFootWorld;
+            aFoot_des[foot].setZero();
 
             if (!use_wbc)
             {
@@ -612,9 +619,6 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
                 _legController.commands[foot].kdCartesian = Kd_stance;
             }
             se_contactState[foot] = contactState;
-
-            // Update for WBC
-            // Fr_des[foot] = -f_ff[foot];
         }
     }
     // se->set_contact_state(se_contactState); todo removed

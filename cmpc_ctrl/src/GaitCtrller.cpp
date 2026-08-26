@@ -53,6 +53,8 @@ void GaitCtrller::Reset() noexcept
     }
     blend_progress_ = 0.0;
     seq_cnt_ = 0;
+    last_wbic_status_ = wbic::WbicStatus::Ok;
+    wbic_fallback_count_ = 0;
 }
 
 void GaitCtrller::SetIMUData(double *imuData)
@@ -248,7 +250,7 @@ void GaitCtrller::TorqueCalculator(double *imuData,
             wbic_in.v_foot_des[leg] = convexMPC->vFoot_des[leg].cast<double>();
             wbic_in.a_foot_des[leg] = convexMPC->aFoot_des[leg].cast<double>();
 
-            wbic_in.contact[leg] = (convexMPC->contact_state[leg] > 0.5f);
+            wbic_in.contact[leg] = convexMPC->planned_contact[leg];
             if (wbic_in.contact[leg])
             {
                 wbic_in.Fr_des[leg] = convexMPC->Fr_des[leg].cast<double>();
@@ -264,6 +266,7 @@ void GaitCtrller::TorqueCalculator(double *imuData,
         wbic_in.sequence = seq_cnt_++;
 
         const wbic::WbicStatus status = _wbicController->Run(wbic_in, &wbic_out);
+        last_wbic_status_ = status;
         wbic_success = (status == wbic::WbicStatus::Ok || status == wbic::WbicStatus::QpMaxIter);
     }
 
@@ -305,6 +308,9 @@ void GaitCtrller::TorqueCalculator(double *imuData,
     else
     {
         // Same-tick instant fallback to Legacy CMPC
+        if (_wbic_enabled) {
+            ++wbic_fallback_count_;
+        }
         blend_progress_ = 0.0;
 
         if (hybridCmd != nullptr)

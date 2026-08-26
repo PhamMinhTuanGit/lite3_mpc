@@ -73,6 +73,8 @@ int main()
 
     wbic::WbicConfig config;
     wbic::KinWbc kin_wbc(config.damping);
+    std::array<int, wbic::kNumJoints> idx_v{};
+    for (int k = 0; k < wbic::kNumJoints; ++k) idx_v[k] = model.idxV(k);
 
     wbic::WbicInput input;
     input.p_body = p_world;
@@ -106,7 +108,7 @@ int main()
         contact_set.assemble(input.contact, input.Fr_des, dyn.Jf, dyn.dJdq_f);
 
         wbic::KinWbcResult result;
-        const bool ok = kin_wbc.Compute(input, dyn, contact_set, config, &result);
+        const bool ok = kin_wbc.Compute(input, dyn, contact_set, idx_v, config, &result);
         if (!ok) {
             std::cerr << "KinWbc failed for contact mask " << mask << std::endl;
             return 4;

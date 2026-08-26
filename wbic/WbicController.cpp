@@ -121,7 +121,7 @@ public:
         // 3. Hierarchical KinWBC
         // ══════════════════════════════════════════════════════════════════
         KinWbcResult kin_res;
-        if (!kin_wbc_.Compute(input, dyn_output_, contact_set_, config_, &kin_res)) {
+        if (!kin_wbc_.Compute(input, dyn_output_, contact_set_, idx_v_, config_, &kin_res)) {
             return RecordFailure(WbicStatus::KinWbcError, output);
         }
 

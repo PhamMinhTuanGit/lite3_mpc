@@ -43,6 +43,8 @@ public:
 
     void SetWbicEnabled(bool enabled) noexcept { _wbic_enabled = enabled; }
     bool IsWbicEnabled() const noexcept { return _wbic_enabled; }
+    wbic::WbicStatus LastWbicStatus() const noexcept { return last_wbic_status_; }
+    uint64_t WbicFallbackCount() const noexcept { return wbic_fallback_count_; }
     void Reset() noexcept;
 
     void TorqueCalculator(double *imuData,
@@ -83,6 +85,8 @@ private:
     uint64_t seq_cnt_ = 0;
     double blend_time_ = 0.1;      // 100 ms blend
     double blend_progress_ = 0.0;  // 0.0 -> 1.0
+    wbic::WbicStatus last_wbic_status_ = wbic::WbicStatus::Ok;
+    uint64_t wbic_fallback_count_ = 0;
 };
 
 #endif

@@ -64,6 +64,7 @@ Eigen::Vector3d KinWbc::RotationErrorSO3(const Eigen::Matrix3d& R_des,
 bool KinWbc::Compute(const WbicInput& input,
                      const DynamicsOutput& dyn,
                      const ContactSet& contact_set,
+                     const std::array<int, kNumJoints>& idx_v,
                      const WbicConfig& config,
                      KinWbcResult* result) noexcept
 {
@@ -226,13 +227,13 @@ bool KinWbc::Compute(const WbicInput& input,
 
     result->qddot_cmd = qddot_cur_;
 
-    // Extract actuated joints: generalized coordinates 6..17 map to actuated joints
-    const JointVector delta_q_act = delta_q_cur_.tail<kNumJoints>();
-    const JointVector delta_v_act = delta_v_cur_.tail<kNumJoints>();
-
-    result->delta_q = delta_q_act;
-    result->dq_des = input.qd_joint_raw + delta_v_act;
-    result->q_des = input.q_joint_raw + delta_q_act;
+    // Map Pinocchio tangent-space corrections back to public WBC joint order.
+    for (int k = 0; k < kNumJoints; ++k) {
+        const int pin_v = idx_v[static_cast<std::size_t>(k)];
+        result->delta_q[k] = delta_q_cur_[pin_v];
+        result->q_des[k] = input.q_joint_raw[k] + delta_q_cur_[pin_v];
+        result->dq_des[k] = input.qd_joint_raw[k] + delta_v_cur_[pin_v];
+    }
 
     // Joint limit clamping
     for (int i = 0; i < kNumJoints; ++i) {

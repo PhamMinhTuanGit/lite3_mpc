@@ -6,6 +6,7 @@
 #include "SparseCMPC.h"
 #include "Utilities/cppTypes.h"
 #include "Gait.h"
+#include "ContactSchedule.hpp"
 #include <fstream>
 #include <sys/time.h>
 

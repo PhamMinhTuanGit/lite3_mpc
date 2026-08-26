@@ -40,6 +40,7 @@ public:
     bool Compute(const WbicInput& input,
                  const DynamicsOutput& dyn,
                  const ContactSet& contact_set,
+                 const std::array<int, kNumJoints>& idx_v,
                  const WbicConfig& config,
                  KinWbcResult* result) noexcept;
 

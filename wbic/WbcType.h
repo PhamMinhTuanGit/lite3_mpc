@@ -467,7 +467,7 @@ struct WbicConfig {
     double fz_max = 120.0;
     double delta_qddot_lin_max = 30.0;   // m/s^2
     double delta_qddot_ang_max = 100.0;  // rad/s^2
-    Eigen::Vector3d tau_max{40.0, 40.0, 65.0};  // Nm
+    Eigen::Vector3d tau_max{24.0, 24.0, 36.0};  // Nm, RobotModel effort limits
 
     // Solver settings
     int max_wsr = 50;

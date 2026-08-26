@@ -455,6 +455,56 @@ if(BUILD_TESTS)
   )
   add_test(NAME wbic_safety_benchmark_smoke COMMAND wbic_safety_benchmark_smoke)
 
+  # Contact schedule semantics regression
+  add_executable(wbic_contact_schedule_smoke
+    tests/wbic_contact_schedule_smoke.cpp
+  )
+  target_include_directories(wbic_contact_schedule_smoke PRIVATE
+    cmpc_ctrl/src/MPC_Ctrl
+  )
+  add_test(NAME wbic_contact_schedule_smoke COMMAND wbic_contact_schedule_smoke)
+
+  # Pinocchio tangent-space to public WBC joint mapping regression
+  add_executable(wbic_internal_mapping_smoke
+    tests/wbic_internal_mapping_smoke.cpp
+    robot_model/RobotModel.cpp
+    wbic/KinWbc.cpp
+  )
+  target_include_directories(wbic_internal_mapping_smoke PRIVATE
+    ${THIRD_PARTY}/boost_1_84_0
+    ${THIRD_PARTY}
+    ${THIRD_PARTY}/eigen
+    /usr/include/eigen3
+    robot_model
+    wbic
+  )
+  target_link_libraries(wbic_internal_mapping_smoke
+    -lpthread -lm -lrt -ldl -lstdc++
+  )
+  add_test(NAME wbic_internal_mapping_smoke COMMAND wbic_internal_mapping_smoke)
+
+  # Persistent/fresh QP contact-transition equivalence regression
+  add_executable(wbic_qp_contact_transition_smoke
+    tests/wbic_qp_contact_transition_smoke.cpp
+    robot_model/RobotModel.cpp
+    wbic/KinWbc.cpp
+    wbic/WbicQp.cpp
+  )
+  target_include_directories(wbic_qp_contact_transition_smoke PRIVATE
+    ${THIRD_PARTY}/boost_1_84_0
+    ${THIRD_PARTY}
+    ${THIRD_PARTY}/eigen
+    /usr/include/eigen3
+    cmpc_ctrl/src/qpOASES/include
+    robot_model
+    wbic
+  )
+  target_link_libraries(wbic_qp_contact_transition_smoke
+    qpOASES
+    -lpthread -lm -lrt -ldl -lstdc++
+  )
+  add_test(NAME wbic_qp_contact_transition_smoke COMMAND wbic_qp_contact_transition_smoke)
+
   # 10. WBIC CMPC End-to-End Integration test
   add_executable(wbic_integration_smoke
     tests/wbic_integration_smoke.cpp

@@ -50,6 +50,7 @@ private:
 
     std::unique_ptr<qpOASES::SQProblem> solver_;
     bool is_initialized_ = false;
+    ContactFlags prev_contact_{{false, false, false, false}};
 
     // Fixed-size row-major buffers for qpOASES (zero heap alloc at runtime)
     qpOASES::real_t H_mem_[kNumVars * kNumVars] = {};

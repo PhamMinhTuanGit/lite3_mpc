@@ -94,7 +94,7 @@ int main()
         contact_set.assemble(input.contact, input.Fr_des, dyn.Jf, dyn.dJdq_f);
 
         wbic::KinWbcResult kin_res;
-        if (!kin_wbc.Compute(input, dyn, contact_set, config, &kin_res)) {
+        if (!kin_wbc.Compute(input, dyn, contact_set, idx_v, config, &kin_res)) {
             std::cerr << "Case 1: KinWbc failed" << std::endl;
             return 2;
         }
@@ -149,7 +149,7 @@ int main()
         contact_set.assemble(input.contact, input.Fr_des, dyn.Jf, dyn.dJdq_f);
 
         wbic::KinWbcResult kin_res;
-        kin_wbc.Compute(input, dyn, contact_set, config, &kin_res);
+        kin_wbc.Compute(input, dyn, contact_set, idx_v, config, &kin_res);
 
         wbic::WbicQpResult qp_res;
         if (!wbic_qp.Solve(input, dyn, contact_set, kin_res.qddot_cmd,
@@ -181,7 +181,7 @@ int main()
         contact_set.assemble(input.contact, input.Fr_des, dyn.Jf, dyn.dJdq_f);
 
         wbic::KinWbcResult kin_res;
-        kin_wbc.Compute(input, dyn, contact_set, config, &kin_res);
+        kin_wbc.Compute(input, dyn, contact_set, idx_v, config, &kin_res);
 
         wbic::WbicQpResult qp_res;
         if (!wbic_qp.Solve(input, dyn, contact_set, kin_res.qddot_cmd,
