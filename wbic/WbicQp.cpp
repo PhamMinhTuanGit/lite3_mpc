@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <cstdio>
 
 namespace wbic {
 
@@ -144,41 +145,52 @@ bool WbicQp::Solve(const WbicInput& input,
         ++row;
     }
 
-    // Constraint 2: Friction Pyramid for stance legs (4 inequalities per contact leg)
+    // Constraint 2: Friction Pyramid (16 inequalities: 4 per leg, rows 6..21)
     for (int leg = 0; leg < kNumLegs; ++leg) {
+        const int f_idx = 6 + leg * 3;
+        const int row_base = 6 + leg * 4;
+
+        // 1. Fx - mu * Fz <= 0
+        A_mat_(row_base + 0, f_idx + 0) = 1.0;
+        A_mat_(row_base + 0, f_idx + 2) = -config.mu;
+
+        // 2. -Fx - mu * Fz <= 0
+        A_mat_(row_base + 1, f_idx + 0) = -1.0;
+        A_mat_(row_base + 1, f_idx + 2) = -config.mu;
+
+        // 3. Fy - mu * Fz <= 0
+        A_mat_(row_base + 2, f_idx + 1) = 1.0;
+        A_mat_(row_base + 2, f_idx + 2) = -config.mu;
+
+        // 4. -Fy - mu * Fz <= 0
+        A_mat_(row_base + 3, f_idx + 1) = -1.0;
+        A_mat_(row_base + 3, f_idx + 2) = -config.mu;
+
         if (input.contact[static_cast<std::size_t>(leg)]) {
-            const int f_idx = 6 + leg * 3;
-            // 1. Fx - mu * Fz <= 0
-            A_mat_(row, f_idx + 0) = 1.0;
-            A_mat_(row, f_idx + 2) = -config.mu;
-            lbA_vec_[row] = -kBigNumber;
-            ubA_vec_[row] = 0.0;
-            ++row;
-
-            // 2. -Fx - mu * Fz <= 0
-            A_mat_(row, f_idx + 0) = -1.0;
-            A_mat_(row, f_idx + 2) = -config.mu;
-            lbA_vec_[row] = -kBigNumber;
-            ubA_vec_[row] = 0.0;
-            ++row;
-
-            // 3. Fy - mu * Fz <= 0
-            A_mat_(row, f_idx + 1) = 1.0;
-            A_mat_(row, f_idx + 2) = -config.mu;
-            lbA_vec_[row] = -kBigNumber;
-            ubA_vec_[row] = 0.0;
-            ++row;
-
-            // 4. -Fy - mu * Fz <= 0
-            A_mat_(row, f_idx + 1) = -1.0;
-            A_mat_(row, f_idx + 2) = -config.mu;
-            lbA_vec_[row] = -kBigNumber;
-            ubA_vec_[row] = 0.0;
-            ++row;
+            lbA_vec_[row_base + 0] = -kBigNumber;
+            ubA_vec_[row_base + 0] = 0.0;
+            lbA_vec_[row_base + 1] = -kBigNumber;
+            ubA_vec_[row_base + 1] = 0.0;
+            lbA_vec_[row_base + 2] = -kBigNumber;
+            ubA_vec_[row_base + 2] = 0.0;
+            lbA_vec_[row_base + 3] = -kBigNumber;
+            ubA_vec_[row_base + 3] = 0.0;
+        } else {
+            // For swing legs, contact forces are already constrained to 0 via simple bounds lb=ub=0.
+            // Relaxing these rows to [-kBigNumber, kBigNumber] prevents degenerate zero-equality rows.
+            lbA_vec_[row_base + 0] = -kBigNumber;
+            ubA_vec_[row_base + 0] = kBigNumber;
+            lbA_vec_[row_base + 1] = -kBigNumber;
+            ubA_vec_[row_base + 1] = kBigNumber;
+            lbA_vec_[row_base + 2] = -kBigNumber;
+            ubA_vec_[row_base + 2] = kBigNumber;
+            lbA_vec_[row_base + 3] = -kBigNumber;
+            ubA_vec_[row_base + 3] = kBigNumber;
         }
     }
+    row = 6 + kNumLegs * 4; // 22
 
-    // Constraint 3: Total Actuated Torque Limits (12 two-sided inequalities)
+    // Constraint 3: Total Actuated Torque Limits (12 two-sided inequalities, rows 22..33)
     // -tau_max <= tau_total <= tau_max
     const auto M_a = dyn.M.bottomRows<12>();
     const auto h_a = dyn.h.tail<12>();
