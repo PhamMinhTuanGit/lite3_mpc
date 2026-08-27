@@ -110,10 +110,14 @@ public:
 
   Vec3<float> Fr_des[4];
 
+  // Exact world-frame foot moment arms supplied to the most recent MPC solve.
+  Vec3<float> mpc_moment_arms[4];
+
   Vec4<float> contact_state;
   // Exact stance decision used by this tick's command generator. Continuous
   // phase alone is ambiguous at lift-off and touch-down boundaries.
   std::array<bool, 4> planned_contact{{false, false, false, false}};
+  bool IsStanding() const noexcept { return current_gait == 4; }
 
 private:
   void _SetupCommand(StateEstimatorContainer<float> &_stateEstimator, std::vector<double> gamepadCommand);
@@ -158,7 +162,7 @@ private:
   bool firstSwing[4];  //true
   float swingTimeRemaining[4];
   float stand_traj[6];
-  int current_gait;
+  int current_gait = -1;
   int gaitNumber;
 
   Vec3<float> world_position_desired;

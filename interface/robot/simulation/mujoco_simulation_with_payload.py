@@ -19,6 +19,7 @@ CTRL_IP = "127.0.0.1"
 CTRL_PORT = 30010
 # Viewer có thể tắt bằng biến môi trường VIEWER=0 (cho chạy test headless tự động).
 USE_VIEWER = os.environ.get("VIEWER", "1") == "1"
+SIM_DURATION = float(os.environ.get("SIM_DURATION", "0"))
 DT = 0.001
 RENDER_INTERVAL = 10
 
@@ -63,10 +64,8 @@ class MuJoCoSimulation:
         if GMO_SCENARIO == "early-contact":
             # Stair terrain creates unscheduled/early touchdown opportunities.
             xml_relpath = "../../../Lite3_description/lite3_mjcf/mjcf/Lite3_stair.xml"
-        elif ENABLE_PAYLOAD:
-            xml_relpath = "Lite3_payload.xml"
         else:
-            xml_relpath = "../../../third_party/deep_robotics_model/Lite3/Lite3_mjcf/mjcf/Lite3.xml"
+            xml_relpath = "Lite3_payload.xml"
         # ───────────────────────────────────────────────────────────────────
 
         # Load MJCF
@@ -76,6 +75,10 @@ class MuJoCoSimulation:
             raise FileNotFoundError(f"Cannot find MJCF: {xml_full}")
 
         self.model = mujoco.MjModel.from_xml_path(xml_full)
+        if not ENABLE_PAYLOAD:
+            payload_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "payload")
+            if payload_body_id >= 0:
+                self.model.body_mass[payload_body_id] = 1e-6
         self.model.opt.timestep = DT
         self.data = mujoco.MjData(self.model)
 
@@ -123,8 +126,11 @@ class MuJoCoSimulation:
     def _set_initial_pose(self, key: str):
         """Set joint positions to match PyBullet initial angles."""
         qpos0 = self.data.qpos.copy()
+        qpos0[0:3] = [0.0, 0.0, 0.35]
+        qpos0[3:7] = [1.0, 0.0, 0.0, 0.0]
         qpos0[7:7+self.dof_num] = URDF_INIT[key]
         self.data.qpos[:] = qpos0
+        self.data.qvel[:] = 0.0
         mujoco.mj_forward(self.model, self.data)
 
     def print_debug_info(self):
@@ -187,6 +193,9 @@ class MuJoCoSimulation:
                 mujoco.mj_step(self.model, self.data)
 
                 self.timestamp = step * DT
+                if SIM_DURATION > 0 and self.timestamp >= SIM_DURATION:
+                    print(f"[INFO] SIM_DURATION={SIM_DURATION}s reached, stopping simulation.")
+                    break
 
                 # 采样 & 发送观测
                 self._send_robot_state(step)

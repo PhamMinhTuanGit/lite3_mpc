@@ -135,6 +135,7 @@ set(CMPC_SRCS
   wbic/KinWbc.cpp
   wbic/WbicQp.cpp
   wbic/WbicController.cpp
+  wbic/CentroidalWrenchController.cpp
 )
 
 # ========== 仿真器宏定义 ==========
@@ -464,6 +465,15 @@ if(BUILD_TESTS)
   )
   add_test(NAME wbic_contact_schedule_smoke COMMAND wbic_contact_schedule_smoke)
 
+  # Standing must keep all four LinearKF contact trusts constant at one.
+  add_executable(standing_contact_estimator_smoke
+    tests/standing_contact_estimator_smoke.cpp
+  )
+  target_include_directories(standing_contact_estimator_smoke PRIVATE
+    cmpc_ctrl/src/StateEstimator
+  )
+  add_test(NAME standing_contact_estimator_smoke COMMAND standing_contact_estimator_smoke)
+
   # Pinocchio tangent-space to public WBC joint mapping regression
   add_executable(wbic_internal_mapping_smoke
     tests/wbic_internal_mapping_smoke.cpp
@@ -532,4 +542,25 @@ if(BUILD_TESTS)
     -lpthread -lm -lrt -ldl -lstdc++
   )
   add_test(NAME wbic_integration_smoke COMMAND wbic_integration_smoke)
+
+  # 11. Centroidal Wrench Controller and GRF QP Smoke Test
+  add_executable(centroidal_wrench_wbc_smoke
+    tests/centroidal_wrench_wbc_smoke.cpp
+    wbic/CentroidalWrenchController.cpp
+    wbic/KinWbc.cpp
+  )
+  target_include_directories(centroidal_wrench_wbc_smoke PRIVATE
+    ${THIRD_PARTY}/boost_1_84_0
+    ${THIRD_PARTY}
+    ${THIRD_PARTY}/eigen
+    /usr/include/eigen3
+    cmpc_ctrl/src/qpOASES/include
+    robot_model
+    wbic
+  )
+  target_link_libraries(centroidal_wrench_wbc_smoke
+    qpOASES
+    -lpthread -lm -lrt -ldl -lstdc++
+  )
+  add_test(NAME centroidal_wrench_wbc_smoke COMMAND centroidal_wrench_wbc_smoke)
 endif()

@@ -50,6 +50,7 @@ public:
         ++consecutive_failures_;
         if (consecutive_failures_ >= config_.max_consecutive_failures) {
             is_latched_ = true;
+            wbic_qp_.Reset();
         }
         if (output) {
             output->command_source = CommandSource::FallbackLegacyCmpc;
@@ -88,6 +89,27 @@ public:
         dyn_output_.M = robot_model_.M();
         dyn_output_.h = robot_model_.h();
 
+        if (input.payload_config.enabled && input.payload_config.mass > 0.0) {
+            constexpr double kGravity = 9.81;
+            const double mp = input.payload_config.mass;
+            const Eigen::Vector3d rp_world = input.R_body * input.payload_config.com_body;
+            const Eigen::Vector3d fg_world(0.0, 0.0, mp * kGravity);
+            const Eigen::Vector3d tau_g_world = rp_world.cross(fg_world);
+
+            dyn_output_.h.segment<3>(0) += fg_world;
+            dyn_output_.h.segment<3>(3) += tau_g_world;
+
+            Eigen::Matrix3d rx;
+            rx <<         0.0, -rp_world(2),  rp_world(1),
+                  rp_world(2),          0.0, -rp_world(0),
+                 -rp_world(1),  rp_world(0),          0.0;
+
+            dyn_output_.M.block<3, 3>(0, 0).diagonal().array() += mp;
+            dyn_output_.M.block<3, 3>(3, 3) += mp * (rx.transpose() * rx);
+            dyn_output_.M.block<3, 3>(0, 3) += mp * rx.transpose();
+            dyn_output_.M.block<3, 3>(3, 0) += mp * rx;
+        }
+
         // Compute M_inv
         Eigen::Matrix<double, kVelocityDimension, kVelocityDimension> M_damped = dyn_output_.M;
         M_damped.diagonal().array() += config_.regularization;
@@ -125,12 +147,22 @@ public:
             return RecordFailure(WbicStatus::KinWbcError, output);
         }
 
+        output->qddot_cmd = kin_res.qddot_cmd;
+        output->orientation_error = kin_res.orientation_error;
+        output->x_ddot_ori = kin_res.x_ddot_ori;
+
         // ══════════════════════════════════════════════════════════════════
         // 4. Reduced WBIC QP
         // ══════════════════════════════════════════════════════════════════
         WbicQpResult qp_res;
         if (!wbic_qp_.Solve(input, dyn_output_, contact_set_, kin_res.qddot_cmd,
                             kin_res.q_des, kin_res.dq_des, idx_v_, config_, &qp_res)) {
+            output->qddot = qp_res.qddot;
+            output->delta_qddot_u = qp_res.delta_qddot_u;
+            output->f_opt = qp_res.f_opt;
+            output->tau_ff = qp_res.tau_ff;
+            output->residuals = qp_res.residuals;
+            output->n_wsr = qp_res.wsr_performed;
             return RecordFailure(qp_res.status, output);
         }
 
@@ -140,23 +172,24 @@ public:
         consecutive_failures_ = 0;
 
         output->qddot = qp_res.qddot;
+        output->qddot_cmd = kin_res.qddot_cmd;
+        output->orientation_error = kin_res.orientation_error;
+        output->x_ddot_ori = kin_res.x_ddot_ori;
+        output->delta_qddot_u = qp_res.delta_qddot_u;
         output->delta_q = kin_res.delta_q;
         output->q_des = kin_res.q_des;
         output->dq_des = kin_res.dq_des;
         output->f_opt = qp_res.f_opt;
         output->tau_ff = qp_res.tau_ff;
         output->residuals = qp_res.residuals;
+        output->n_wsr = qp_res.wsr_performed;
         output->status = qp_res.status;
         output->command_source = CommandSource::Wbic;
 
-        // Smooth gain ramp during blend period (100 ms)
-        blend_timer_s_ += 0.002; // nominal 500 Hz dt
-        const double blend_ratio = std::clamp(blend_timer_s_ / std::max(config_.blend_time_s, 1e-4), 0.0, 1.0);
-
         for (int leg = 0; leg < kNumLegs; ++leg) {
             for (int j = 0; j < 3; ++j) {
-                output->joint_kp[leg * 3 + j] = blend_ratio * config_.kp_joint[j];
-                output->joint_kd[leg * 3 + j] = blend_ratio * config_.kd_joint[j];
+                output->joint_kp[leg * 3 + j] = config_.kp_joint[j];
+                output->joint_kd[leg * 3 + j] = config_.kd_joint[j];
             }
         }
 

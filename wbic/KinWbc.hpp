@@ -11,6 +11,8 @@ namespace wbic {
 
 struct KinWbcResult {
     GeneralizedAcceleration qddot_cmd = GeneralizedAcceleration::Zero();
+    Eigen::Vector3d orientation_error = Eigen::Vector3d::Zero();
+    Eigen::Vector3d x_ddot_ori = Eigen::Vector3d::Zero();
     JointVector delta_q = JointVector::Zero();
     JointVector q_des = JointVector::Zero();
     JointVector dq_des = JointVector::Zero();

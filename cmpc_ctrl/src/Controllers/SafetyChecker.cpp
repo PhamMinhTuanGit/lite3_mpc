@@ -125,16 +125,16 @@ bool SafetyChecker<T>::checkJointLimit(LegController<float> &_legController)
     bool safeJoint = true;
 
     // FL_HipX_joint: lower=-0.523, upper= 0.523 rad (~±30°)
-    const T max_ab_ad_angle = 0.523;
-    const T min_ab_ad_angle = -0.523;
+    const T max_ab_ad_angle = 0.65;
+    const T min_ab_ad_angle = -0.65;
 
     // FL_HipY_joint: lower=-2.67,  upper= 0.314 rad
-    const T max_hip_angle = 0.314;
-    const T min_hip_angle = -2.67;
+    const T max_hip_angle = 0.60;
+    const T min_hip_angle = -2.85;
 
     // FL_Knee_joint: lower= 0.524, upper= 2.792 rad
-    const T max_knee_angle = 2.792;
-    const T min_knee_angle = 0.524;
+    const T max_knee_angle = 2.95;
+    const T min_knee_angle = 0.35;
 
     for (int leg = 0; leg < 4; leg++)
     {

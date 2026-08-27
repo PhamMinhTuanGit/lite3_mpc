@@ -1,7 +1,9 @@
 #pragma once
 
 #include <memory>
+#include <string>
 #include "WbcType.h"
+#include "CentroidalModel.hpp"
 
 /**
  * CMPCBridge provides a clean, thread-safe, non-singleton wrapper around GaitCtrller.
@@ -22,6 +24,11 @@ public:
     void SetRobotVel(double* vel3);
 
     void SetWbicEnabled(bool enabled);
+    void SetStandingTestMode(wbic::StandingTestMode mode);
+    void SetStandingDiagnosticCsvPath(const std::string& path);
+    void SetUseCentroidalWrench(bool enable);
+    void SetPayloadConfig(const wbic::PayloadConfig& cfg);
+    void SetForceRateWeight(double w);
     bool IsWbicEnabled() const;
     void Reset();
 

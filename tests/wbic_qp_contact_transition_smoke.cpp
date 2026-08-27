@@ -26,8 +26,12 @@ bool CompareResults(const wbic::WbicQpResult& persistent,
         || (persistent.tau_ff - fresh.tau_ff).lpNorm<Eigen::Infinity>() > kVectorTolerance
         || !Near(persistent.residuals.eom_residual_norm,
                  fresh.residuals.eom_residual_norm, kResidualTolerance)
+        || !Near(persistent.residuals.kin_contact_acc_residual_norm,
+                 fresh.residuals.kin_contact_acc_residual_norm, kResidualTolerance)
         || !Near(persistent.residuals.contact_acc_residual_norm,
                  fresh.residuals.contact_acc_residual_norm, kResidualTolerance)
+        || !Near(persistent.residuals.delta_qddot_u_norm,
+                 fresh.residuals.delta_qddot_u_norm, kResidualTolerance)
         || !Near(persistent.residuals.inequality_violation_norm,
                  fresh.residuals.inequality_violation_norm, kResidualTolerance)
         || !Near(persistent.residuals.torque_limit_margin,

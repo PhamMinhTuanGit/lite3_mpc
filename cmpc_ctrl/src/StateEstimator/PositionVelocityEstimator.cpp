@@ -8,6 +8,7 @@
  */
 
 #include "PositionVelocityEstimator.h"
+#include "ContactPhase.hpp"
 
 #include <fstream>
 
@@ -275,19 +276,8 @@ void LinearKFPositionVelocityEstimator<T>::run()
         rindex2 = 12 + i1;
         rindex3 = 24 + i;
 
-        T trust = T(1);
         T phase = fmin(this->_stateEstimatorData.result->contactEstimate(i), T(1));
-        // T trust_window = T(0.25);
-        T trust_window = T(0.2);
-
-        if (phase < trust_window)
-        {
-            trust = phase / trust_window;
-        }
-        else if (phase > (T(1) - trust_window))
-        {
-            trust = (T(1) - phase) / trust_window;
-        }
+        const T trust = LinearKfContactTrust(phase);
         // T high_suspect_number(1000);
         T high_suspect_number(100);
 

@@ -4,6 +4,7 @@
 
 #include "Utilities/Timer.h"
 #include "Utilities/Utilities_print.h"
+#include "StateEstimator/ContactPhase.hpp"
 #include "convexMPC_interface.h"
 // #include "../../../../common/FootstepPlanner/GraphSearch.h"
 
@@ -102,6 +103,7 @@ ConvexMPCLocomotion::ConvexMPCLocomotion(float _dt, int _iterations_between_mpc)
     {
         f_ff[i].setZero();
         Fr_des[i].setZero();
+        mpc_moment_arms[i].setZero();
         pFoot_des[i].setZero();
         vFoot_des[i].setZero();
         aFoot_des[i].setZero();
@@ -203,19 +205,6 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
         {
             gaitNumber = 4; // Standing
         }
-    }
-
-    // Check if transition to standing 检查是否过渡到站立
-    if (((gaitNumber == 4) && current_gait != 4) || firstRun)
-    {
-        stand_traj[0] = seResult.position[0];
-        stand_traj[1] = seResult.position[1];
-        stand_traj[2] = _body_height;
-        stand_traj[3] = 0;
-        stand_traj[4] = 0;
-        stand_traj[5] = seResult.rpy[2];
-        world_position_desired[0] = stand_traj[0];
-        world_position_desired[1] = stand_traj[1];
     }
 
     // pick gait
@@ -345,6 +334,18 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
         std::cout << "err robot mode!!!" << std::endl;
     }
 
+    // Freeze one shared MPC/WBC reference on the transition into standing.
+    if ((gaitNumber == 4) && (current_gait != 4 || firstRun))
+    {
+        stand_traj[0] = seResult.position[0];
+        stand_traj[1] = seResult.position[1];
+        stand_traj[2] = seResult.position[2];
+        stand_traj[3] = 0.0f;
+        stand_traj[4] = 0.0f;
+        stand_traj[5] = seResult.rpy[2];
+        world_position_desired << stand_traj[0], stand_traj[1], stand_traj[2];
+    }
+
     current_gait = gaitNumber;
     gait->setIterations(iterationsBetweenMPC, iterationCounter); // Gait period calculation
 
@@ -354,6 +355,10 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
     Vec3<float> v_des_world =
         omniMode ? v_des_robot
                  : seResult.rBody.transpose() * v_des_robot; //Desired linear velocity in world coordinate system
+    if (current_gait == 4)
+    {
+        v_des_world.setZero();
+    }
     Vec3<float> v_robot = seResult.vWorld;                   //The robot's actual speed in the world coordinate system
 
     // Integral-esque pitche and roll compensation
@@ -631,33 +636,45 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
                 _legController.commands[foot].kpCartesian = 0. * Kp_stance;
                 _legController.commands[foot].kdCartesian = Kd_stance;
             }
-            se_contactState[foot] = contactState;
+            se_contactState[foot] = EstimatorContactPhase(current_gait == 4, contactState);
         }
+    }
+    if (current_gait == 4)
+    {
+        planned_contact.fill(true);
+        se_contactState.setConstant(0.5f);
     }
     // se->set_contact_state(se_contactState); todo removed
     _stateEstimator.setContactPhase(se_contactState);
 
     // Update For WBC
-    pBody_des[0] = world_position_desired[0];
-    pBody_des[1] = world_position_desired[1];
-    pBody_des[2] = _body_height;
-
-    vBody_des[0] = v_des_world[0];
-    vBody_des[1] = v_des_world[1];
-    vBody_des[2] = 0.;
+    if (current_gait == 4)
+    {
+        pBody_des << stand_traj[0], stand_traj[1], stand_traj[2];
+        vBody_des.setZero();
+    }
+    else
+    {
+        pBody_des << world_position_desired[0], world_position_desired[1], _body_height;
+        vBody_des << v_des_world[0], v_des_world[1], 0.0f;
+    }
 
     aBody_des.setZero();
 
     pBody_RPY_des[0] = 0.;
     pBody_RPY_des[1] = 0.;
-    pBody_RPY_des[2] = _yaw_des;
+    pBody_RPY_des[2] = (current_gait == 4) ? stand_traj[5] : _yaw_des;
 
     vBody_Ori_des[0] = 0.;
     vBody_Ori_des[1] = 0.;
-    vBody_Ori_des[2] = _yaw_turn_rate;
+    vBody_Ori_des[2] = (current_gait == 4) ? 0.0f : _yaw_turn_rate;
 
     // contact_state = gait->getContactState();
     contact_state = gait->getContactState();
+    if (current_gait == 4)
+    {
+        contact_state.setConstant(0.5f);
+    }
     // END of WBC Update
 }
 
@@ -685,7 +702,7 @@ void ConvexMPCLocomotion::updateMPCIfNeeded(int *mpcTable,
                                      (float)stand_traj[5] /*+(float)stateCommand->data.stateDes[11]*/,
                                      (float)stand_traj[0] /*+(float)fsm->main_control_settings.p_des[0]*/,
                                      (float)stand_traj[1] /*+(float)fsm->main_control_settings.p_des[1]*/,
-                                     (float)_body_height /*fsm->main_control_settings.p_des[2]*/,
+                                     (float)stand_traj[2] /* frozen standing body height */,
                                      0,
                                      0,
                                      0,
@@ -790,6 +807,10 @@ void ConvexMPCLocomotion::solveDenseMPC(int *mpcTable, StateEstimatorContainer<f
     float r[12];
     for (int i = 0; i < 12; i++)
         r[i] = pFoot[i % 4][i / 4] - seResult.position[i / 4];
+    for (int leg = 0; leg < 4; ++leg)
+    {
+        mpc_moment_arms[leg] << r[leg], r[4 + leg], r[8 + leg];
+    }
 
     // printf("current posistion: %3.f %.3f %.3f\n", p[0], p[1], p[2]);
 

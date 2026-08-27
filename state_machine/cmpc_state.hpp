@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cstring>
 #include <chrono>
+#include <cstdlib>
 
 #include "state_base.h"
 #include "cmpc_bridge.h"
@@ -172,6 +173,52 @@ public:
 
         double pidParam[4] = {kStandKp, kStandKd, kJointKp, kJointKd};
         gait_ctrl_ = std::make_unique<CMPCBridge>(freq, pidParam, kDefaultWbicEnabled);
+
+        if (const char* mode_env = std::getenv("LITE3_STANDING_TEST_MODE")) {
+            const std::string mode(mode_env);
+            if (mode == "TEST_A_LEGACY" || mode == "A" || mode == "0") {
+                gait_ctrl_->SetStandingTestMode(wbic::StandingTestMode::TestALegacy);
+            } else if (mode == "TEST_B_WBIC_NORMAL" || mode == "B" || mode == "1") {
+                gait_ctrl_->SetStandingTestMode(wbic::StandingTestMode::TestBWbicNormal);
+            } else if (mode == "TEST_C_WBIC_LOCK_BASE" || mode == "C" || mode == "2") {
+                gait_ctrl_->SetStandingTestMode(wbic::StandingTestMode::TestCWbicLockBase);
+            } else {
+                std::cerr << "[CMPCState] Invalid LITE3_STANDING_TEST_MODE='" << mode
+                          << "'; keeping build default" << std::endl;
+            }
+        }
+        if (const char* csv_env = std::getenv("LITE3_STANDING_DIAGNOSTIC_CSV")) {
+            gait_ctrl_->SetStandingDiagnosticCsvPath(csv_env);
+        }
+
+        if (const char* wrench_env = std::getenv("LITE3_USE_CENTROIDAL_WRENCH")) {
+            const std::string val(wrench_env);
+            const bool enable = (val == "1" || val == "true" || val == "ON" || val == "on");
+            gait_ctrl_->SetUseCentroidalWrench(enable);
+            std::cout << "[CMPCState] LITE3_USE_CENTROIDAL_WRENCH=" << (enable ? "1" : "0") << std::endl;
+        }
+
+        wbic::PayloadConfig payload_cfg;
+        if (const char* payload_env = std::getenv("LITE3_PAYLOAD_AWARE")) {
+            const std::string val(payload_env);
+            payload_cfg.enabled = (val == "1" || val == "true" || val == "ON" || val == "on");
+            if (const char* mass_env = std::getenv("LITE3_PAYLOAD_MASS")) {
+                payload_cfg.mass = std::stod(mass_env);
+            }
+            if (const char* com_x_env = std::getenv("LITE3_PAYLOAD_COM_X")) {
+                payload_cfg.com_body.x() = std::stod(com_x_env);
+            }
+            gait_ctrl_->SetPayloadConfig(payload_cfg);
+            std::cout << "[CMPCState] LITE3_PAYLOAD_AWARE=" << (payload_cfg.enabled ? "1" : "0")
+                      << " (mass=" << payload_cfg.mass << " kg, com_x=" << payload_cfg.com_body.x() << " m)" << std::endl;
+        }
+
+        if (const char* fr_env = std::getenv("LITE3_GRF_FORCE_RATE_WEIGHT")) {
+            const double w_fr = std::stod(fr_env);
+            gait_ctrl_->SetForceRateWeight(w_fr);
+            std::cout << "[CMPCState] LITE3_GRF_FORCE_RATE_WEIGHT=" << w_fr << std::endl;
+        }
+
         gait_ctrl_->SetGaitType(0);   // 0 = trot
         gait_ctrl_->SetRobotMode(0);  // 0 = follow user velocity command
         gait_ctrl_->Reset();

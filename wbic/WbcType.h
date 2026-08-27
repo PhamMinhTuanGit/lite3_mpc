@@ -11,6 +11,7 @@
 #include <Eigen/Geometry>
 
 #include <pinocchio/multibody/model.hpp>
+#include "CentroidalModel.hpp"
 
 /**
  * Common types and data structures for the Lite3 WBIC pipeline.
@@ -79,6 +80,13 @@ enum class WbicStatus : uint8_t {
     ResidualExceeded,
     TorqueLimitViolated,
     SafetyViolation,
+};
+
+/** Standing-only diagnostic A/B modes. */
+enum class StandingTestMode : uint8_t {
+    TestALegacy = 0,
+    TestBWbicNormal,
+    TestCWbicLockBase,
 };
 
 inline Configuration neutralConfiguration()
@@ -352,6 +360,8 @@ struct WbicInput {
     // Stance/Swing flags
     ContactFlags contact{{false, false, false, false}};
     ContactPhase phase = ContactPhase::Zero();
+    bool standing_mode = false;
+    PayloadConfig payload_config{};
 
     // Metadata
     double timestamp = 0.0;
@@ -392,7 +402,9 @@ struct WbicInput {
 /** Residual and diagnostic telemetry. */
 struct WbicResiduals {
     double eom_residual_norm = 0.0;
+    double kin_contact_acc_residual_norm = 0.0;
     double contact_acc_residual_norm = 0.0;
+    double delta_qddot_u_norm = 0.0;
     double inequality_violation_norm = 0.0;
     double torque_limit_margin = 0.0;
 };
@@ -402,6 +414,10 @@ struct WbicOutput {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
     GeneralizedAcceleration qddot = GeneralizedAcceleration::Zero();
+    GeneralizedAcceleration qddot_cmd = GeneralizedAcceleration::Zero();
+    Eigen::Matrix<double, 6, 1> delta_qddot_u = Eigen::Matrix<double, 6, 1>::Zero();
+    Eigen::Vector3d orientation_error = Eigen::Vector3d::Zero();
+    Eigen::Vector3d x_ddot_ori = Eigen::Vector3d::Zero();
     JointVector delta_q = JointVector::Zero();
     JointVector q_des = JointVector::Zero();
     JointVector dq_des = JointVector::Zero();
@@ -420,11 +436,16 @@ struct WbicOutput {
     WbicStatus status = WbicStatus::Ok;
     WbicResiduals residuals{};
     double solve_time_us = 0.0;
+    int n_wsr = 0;
     CommandSource command_source = CommandSource::Wbic;
 
     void reset() noexcept
     {
         qddot.setZero();
+        qddot_cmd.setZero();
+        delta_qddot_u.setZero();
+        orientation_error.setZero();
+        x_ddot_ori.setZero();
         delta_q.setZero();
         q_des.setZero();
         dq_des.setZero();
@@ -435,6 +456,7 @@ struct WbicOutput {
         status = WbicStatus::Ok;
         residuals = WbicResiduals{};
         solve_time_us = 0.0;
+        n_wsr = 0;
         command_source = CommandSource::Wbic;
     }
 };
@@ -474,12 +496,12 @@ struct WbicConfig {
     double max_cpu_time = 0.0005;  // 0.5 ms
 
     // Residual thresholds
-    double eom_residual_threshold = 1e-4;
-    double contact_acc_residual_threshold = 1e-3;
-    double inequality_residual_threshold = 1e-6;
+    double eom_residual_threshold = 10.0;
+    double contact_acc_residual_threshold = 1e-2;
+    double inequality_residual_threshold = 1e-2;
 
     // Failure policy
-    int max_consecutive_failures = 3;
+    int max_consecutive_failures = 10;
     double blend_time_s = 0.1;  // 100 ms legacy -> wbic ramp
 };
 

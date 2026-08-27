@@ -8,11 +8,19 @@
 
 
 
+using Vec3d  = Eigen::Vector3d;
+using Vec6d  = Eigen::Matrix<double, 6, 1>;
+using Vec12d = Eigen::Matrix<double, 12, 1>;
+using VecXd  = Eigen::VectorXd;
+using MatXd  = Eigen::MatrixXd;
+
+#ifndef PROJECT_CPPTYPES_H
 using Vec3  = Eigen::Vector3d;
 using Vec6  = Eigen::Matrix<double, 6, 1>;
 using Vec12 = Eigen::Matrix<double, 12, 1>;
 using VecX  = Eigen::VectorXd;
 using MatX  = Eigen::MatrixXd;
+#endif
 
 inline constexpr int kNumLegs = 4;
 inline constexpr int kNumJoints = 12;
@@ -45,23 +53,23 @@ class RobotModel {
 
   // ───── 3. UPDATE MỖI CHU KỲ ────────────────────────────────────────────
   /// Nạp state. Nhận vận tốc base ở WORLD frame, tự xoay sang BODY.
-  void setState(const Vec3& p_world, const Eigen::Quaterniond& q_wb,
-                const Vec3& v_lin_world, const Vec3& omega_world,
-                const Eigen::Ref<const Vec12>& q_joint_hw,
-                const Eigen::Ref<const Vec12>& dq_joint_hw);
+  void setState(const Vec3d& p_world, const Eigen::Quaterniond& q_wb,
+                const Vec3d& v_lin_world, const Vec3d& omega_world,
+                const Eigen::Ref<const Vec12d>& q_joint_hw,
+                const Eigen::Ref<const Vec12d>& dq_joint_hw);
 
   void updateKinematics();   // FK + frame placement + Jacobian + J̇·v   (~19 µs)
   void updateDynamics();     // M (mirror + armature) + h                (~20 µs)
   void update() { updateKinematics(); updateDynamics(); }
 
   // ───── 2. MA TRẬN ĐỘNG LỰC HỌC ─────────────────────────────────────────
-  const MatX& M() const { return M_; }      // 18×18, đối xứng đầy đủ
-  const VecX& h() const { return h_; }      // 18, = C·v + g
+  const MatXd& M() const { return M_; }      // 18×18, đối xứng đầy đủ
+  const VecXd& h() const { return h_; }      // 18, = C·v + g
 
-  const MatX& Jc()  const { return Jc_; }   // 12×18, 4 chân xếp chồng (3 hàng/chân)
-  const VecX& dJv() const { return dJv_; }  // 12,    J̇·v tương ứng
-  const MatX& Jb()  const { return Jb_; }   // 6×18,  base, LOCAL_WORLD_ALIGNED
-  const Vec6& dJvb() const { return dJvb_; }
+  const MatXd& Jc()  const { return Jc_; }   // 12×18, 4 chân xếp chồng (3 hàng/chân)
+  const VecXd& dJv() const { return dJv_; }  // 12,    J̇·v tương ứng
+  const MatXd& Jb()  const { return Jb_; }   // 6×18,  base, LOCAL_WORLD_ALIGNED
+  const Vec6d& dJvb() const { return dJvb_; }
 
   auto Mu() const { return M_.topRows<6>();    }   // 6 hàng KHÔNG actuated
   auto Ma() const { return M_.bottomRows<12>(); }  // 12 hàng actuated
@@ -69,14 +77,16 @@ class RobotModel {
   auto ha() const { return h_.tail<12>(); }
 
   /// τ = Mₐ·q̈ + hₐ − Jc,ₐᵀ·F   (fc: 12×1, chân swing để 0). Trả về thứ tự HARDWARE.
-  Vec12 jointTorque(const Eigen::Ref<const VecX>& qddot,
-                    const Eigen::Ref<const VecX>& fc) const;
+  Vec12d jointTorque(const Eigen::Ref<const VecXd>& qddot,
+                     const Eigen::Ref<const VecXd>& fc) const;
 
   // ───── Truy vấn động học ───────────────────────────────────────────────
-  Vec3 footPos(int leg) const;      // world
-  Vec3 footVel(int leg) const;      // world
-  Vec3 basePos() const { return q_.head<3>(); }
+  Vec3d footPos(int leg) const;      // world
+  Vec3d footVel(int leg) const;      // world
+  Vec3d basePos() const { return q_.head<3>(); }
   Eigen::Matrix3d baseRot() const { return R_wb_; }
+  Vec3d comPos() const { return data_.com[0]; }      // whole-body CoM in world
+  Vec3d comVel() const { return data_.vcom[0]; }     // whole-body CoM velocity in world
 
   // ───── Hằng số cho SRBD MPC ────────────────────────────────────────────
   double mass() const { return mass_; }
@@ -84,8 +94,8 @@ class RobotModel {
 
   const pinocchio::Model& model() const { return model_; }
   pinocchio::Data&        data()        { return data_; }
-  const VecX& q() const { return q_; }
-  const VecX& v() const { return v_; }
+  const VecXd& q() const { return q_; }
+  const VecXd& v() const { return v_; }
   int idxV(int hw) const { return idx_v_[hw]; }   // hardware -> pinocchio
   int idxQ(int hw) const { return idx_q_[hw]; }
   std::string dump() const;
@@ -98,12 +108,12 @@ class RobotModel {
   std::array<int, 12> idx_q_{}, idx_v_{};
   int base_fid_ = -1;
 
-  VecX q_, v_, a0_, armature_;
+  VecXd q_, v_, a0_, armature_;
   Eigen::Matrix3d R_wb_ = Eigen::Matrix3d::Identity();
 
-  MatX M_, Jc_, Jb_, Jtmp_;
-  VecX h_, dJv_;
-  Vec6 dJvb_ = Vec6::Zero();
+  MatXd M_, Jc_, Jb_, Jtmp_;
+  VecXd h_, dJv_;
+  Vec6d dJvb_ = Vec6d::Zero();
 
   double mass_ = 0.0;
   Eigen::Matrix3d I_body_ = Eigen::Matrix3d::Identity();

@@ -1,18 +1,27 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Script Cross-Compile qua Docker Ubuntu 20.04 (GLIBC 2.31) cho robot Lite3
+# Cross-compile Lite3 ARM64 binaries in Ubuntu 20.04 (GLIBC 2.31), optionally
+# deploy them to the robot, and run this repository's smoke tests remotely.
 # ==============================================================================
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+BUILD_DIR="${PROJECT_DIR}/build_arm20"
 
-REMOTE_HOST="lite3"
-REMOTE_DEST_DIR="/home/ysc/workspaces/tuanpm/lite3_mpc/build"
-IMAGE_NAME="lite3-builder:20.04-v2"
+REMOTE_HOST="${REMOTE_HOST:-lite3}"
+REMOTE_DEST_DIR="${REMOTE_DEST_DIR:-/home/ysc/workspaces/tuanpm/lite3_mpc/build}"
+IMAGE_NAME="${IMAGE_NAME:-lite3-builder:20.04-v3}"
+DEPLOY=1
 
-# Colors
+if [[ "${1:-}" == "--build-only" ]]; then
+    DEPLOY=0
+elif [[ $# -gt 0 ]]; then
+    echo "Usage: $0 [--build-only]" >&2
+    exit 2
+fi
+
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
@@ -20,105 +29,165 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-echo -e "\n${BOLD}${CYAN}================================================================${NC}"
-echo -e "${BOLD}${CYAN}  1. Kiem tra va Chuan bi Docker Image (${IMAGE_NAME})           ${NC}"
-echo -e "${BOLD}${CYAN}================================================================${NC}"
+section() {
+    echo -e "\n${BOLD}${CYAN}================================================================${NC}"
+    echo -e "${BOLD}${CYAN}  $1${NC}"
+    echo -e "${BOLD}${CYAN}================================================================${NC}"
+}
 
-# 1. Kiem tra xem Image da co san chua, neu chua thi build image (chi ton vai giay lan dau)
-if ! docker image inspect "${IMAGE_NAME}" &>/dev/null; then
-    echo -e "${YELLOW}>>> Dang tao Docker image ${IMAGE_NAME} (cai compiler ARM64 & eigen3)...${NC}"
-    docker build -t "${IMAGE_NAME}" - <<'EOF'
+require_command() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        echo -e "${RED}Missing required command: $1${NC}" >&2
+        exit 1
+    fi
+}
+
+require_command docker
+require_command file
+if [[ ${DEPLOY} -eq 1 ]]; then
+    require_command ssh
+    require_command rsync
+fi
+
+section "1. Prepare Docker image (${IMAGE_NAME})"
+
+if ! docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
+    echo -e "${YELLOW}>>> Building Ubuntu 20.04 ARM64 cross-compiler image...${NC}"
+    docker build -t "${IMAGE_NAME}" - <<'DOCKERFILE'
 FROM ubuntu:20.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     cmake \
     make \
     gcc-aarch64-linux-gnu \
     g++-aarch64-linux-gnu \
     libeigen3-dev \
     && rm -rf /var/lib/apt/lists/*
-EOF
-    echo -e "${GREEN}>>> Docker Image ${IMAGE_NAME} da san sang!${NC}"
+DOCKERFILE
 else
-    echo -e "${GREEN}>>> Su dung Docker Image da cache: ${IMAGE_NAME}${NC}"
+    echo -e "${GREEN}>>> Reusing cached image ${IMAGE_NAME}${NC}"
 fi
 
-echo -e "\n${BOLD}${CYAN}================================================================${NC}"
-echo -e "${BOLD}${CYAN}  2. Cross-compiling ARM64 tren may Host (GLIBC 2.31)            ${NC}"
-echo -e "${BOLD}${CYAN}================================================================${NC}"
+section "2. Cross-compile ARM64 binaries (Ubuntu 20.04 / GLIBC 2.31)"
 
-USER_UID=$(id -u)
-USER_GID=$(id -g)
+HOST_UID="$(id -u)"
+HOST_GID="$(id -g)"
 
-# 2. Chay build ben trong container (in day du log compile)
 docker run --rm \
+    -e HOST_UID="${HOST_UID}" \
+    -e HOST_GID="${HOST_GID}" \
     -v "${PROJECT_DIR}:/workspace" \
     -w /workspace \
     "${IMAGE_NAME}" \
-    bash -c "
-        set -e
-        mkdir -p build_arm20 && cd build_arm20
-        rm -f CMakeCache.txt
-        echo '--- [CMake Config] ---'
-        cmake .. \
-            -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain_aarch64.cmake \
+    bash -ceu '
+        mkdir -p /workspace/build_arm20
+        rm -f /workspace/build_arm20/CMakeCache.txt
+        cmake -E remove_directory /workspace/build_arm20/CMakeFiles
+
+        echo "--- [CMake configure] ---"
+        cmake -S /workspace -B /workspace/build_arm20 \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
             -DBUILD_PLATFORM=arm \
             -DBUILD_SIM=OFF \
+            -DUSE_MJCPP=OFF \
             -DBUILD_TESTS=ON
-        
-        echo '--- [Compiling with \$(nproc) cores] ---'
-        make -j\$(nproc)
-        
-        chown -R ${USER_UID}:${USER_GID} /workspace/build_arm20
-    "
 
-echo -e "${GREEN}>>> Build thanh cong tat ca binaries ARM64 cho Ubuntu 20.04!${NC}"
+        echo "--- [Build with $(nproc) cores] ---"
+        cmake --build /workspace/build_arm20 --parallel "4"
+        chown -R "${HOST_UID}:${HOST_GID}" /workspace/build_arm20
+    '
 
-echo -e "\n${YELLOW}>>> [Xac thuc kien truc binary]:${NC}"
-file "${PROJECT_DIR}/build_arm20/pinocchio_smoke"
-file "${PROJECT_DIR}/build_arm20/lite3_pinocchio_model_smoke"
-file "${PROJECT_DIR}/build_arm20/lite3_gmo_smoke"
-file "${PROJECT_DIR}/build_arm20/cmpc_deploy"
+BINARIES=(
+    cmpc_deploy
+    pinocchio_smoke
+    lite3_pinocchio_model_smoke
+    robot_model_smoke
+    wbic_types_smoke
+    wbic_dynamics_smoke
+    wbic_kin_smoke
+    wbic_qp_smoke
+    wbic_mapping_smoke
+    wbic_safety_benchmark_smoke
+    wbic_contact_schedule_smoke
+    standing_contact_estimator_smoke
+    wbic_internal_mapping_smoke
+    wbic_qp_contact_transition_smoke
+    wbic_integration_smoke
+)
 
-echo -e "\n${BOLD}${CYAN}================================================================${NC}"
-echo -e "${BOLD}${CYAN}  3. Chuyen binaries sang robot ${REMOTE_HOST}                   ${NC}"
-echo -e "${BOLD}${CYAN}================================================================${NC}"
+RUNTIME_LIBS=(
+    "${BUILD_DIR}/cmpc_ctrl/src/JCQP/libJCQP.so"
+    "${BUILD_DIR}/cmpc_ctrl/src/qpOASES/libs/libqpOASES.so"
+    "${BUILD_DIR}/cmpc_ctrl/src/qpOASES/libs/libqpOASES.so.3.2"
+    "${BUILD_DIR}/cmpc_ctrl/src/osqp/out/libosqp.so"
+    "${PROJECT_DIR}/third_party/Lite3_MotionSDK/lib/libdeeprobotics_legged_sdk_aarch64.so"
+)
 
+TRANSFER_FILES=()
+echo -e "\n${YELLOW}>>> Verifying ARM64 artifacts:${NC}"
+for binary in "${BINARIES[@]}"; do
+    artifact="${BUILD_DIR}/${binary}"
+    if [[ ! -x "${artifact}" ]]; then
+        echo -e "${RED}Missing build artifact: ${artifact}${NC}" >&2
+        exit 1
+    fi
+    file "${artifact}"
+    TRANSFER_FILES+=("${artifact}")
+done
 
-echo -e "${YELLOW}>>> Dang ket noi SSH toi ${REMOTE_HOST}...${NC}"
-ssh -o ConnectTimeout=8 "${REMOTE_HOST}" "mkdir -p ${REMOTE_DEST_DIR}"
+for library in "${RUNTIME_LIBS[@]}"; do
+    if [[ ! -f "${library}" ]]; then
+        echo -e "${RED}Missing runtime library: ${library}${NC}" >&2
+        exit 1
+    fi
+    file "${library}"
+    TRANSFER_FILES+=("${library}")
+done
 
-rsync -avz --progress \
-    "${PROJECT_DIR}/build_arm20/pinocchio_smoke" \
-    "${PROJECT_DIR}/build_arm20/lite3_pinocchio_model_smoke" \
-    "${PROJECT_DIR}/build_arm20/lite3_gmo_smoke" \
-    "${PROJECT_DIR}/build_arm20/cmpc_deploy" \
-    "${REMOTE_HOST}:${REMOTE_DEST_DIR}/"
+echo -e "${GREEN}>>> ARM64 build completed successfully.${NC}"
 
-# Sync ca thu vien MotionSDK vao thu muc chay
-rsync -avz --progress \
-    "${PROJECT_DIR}/third_party/Lite3_MotionSDK/lib/libdeeprobotics_legged_sdk_aarch64.so" \
-    "${REMOTE_HOST}:${REMOTE_DEST_DIR}/"
+if [[ ${DEPLOY} -eq 0 ]]; then
+    echo -e "${YELLOW}>>> --build-only selected; skipping robot deployment and tests.${NC}"
+    exit 0
+fi
 
+section "3. Deploy artifacts to ${REMOTE_HOST}:${REMOTE_DEST_DIR}"
 
-echo -e "${GREEN}>>> Da chuyen toan bo binary sang Lite3 thanh cong!${NC}"
+ssh -o ConnectTimeout=8 "${REMOTE_HOST}" "mkdir -p '${REMOTE_DEST_DIR}'"
+rsync -avz --progress "${TRANSFER_FILES[@]}" "${REMOTE_HOST}:${REMOTE_DEST_DIR}/"
 
-echo -e "\n${BOLD}${CYAN}================================================================${NC}"
-echo -e "${BOLD}${CYAN}  4. Chay kiem thu Pinocchio tren robot ${REMOTE_HOST}           ${NC}"
-echo -e "${BOLD}${CYAN}================================================================${NC}"
+echo -e "${GREEN}>>> Deployment completed.${NC}"
 
-ssh -t "${REMOTE_HOST}" "bash -lc '
-    cd ${REMOTE_DEST_DIR}
-    echo \"\n\033[1;32m=== [1/3] RUNNING PINOCCHIO CORE TEST ===\033[0m\"
-    ./pinocchio_smoke
+section "4. Run ARM64 smoke tests on ${REMOTE_HOST}"
 
-    echo \"\n\033[1;32m=== [2/3] RUNNING LITE3 MODEL DYNAMICS TEST ===\033[0m\"
-    ./lite3_pinocchio_model_smoke
+REMOTE_TESTS=(
+    pinocchio_smoke
+    lite3_pinocchio_model_smoke
+    robot_model_smoke
+    wbic_types_smoke
+    wbic_dynamics_smoke
+    wbic_kin_smoke
+    wbic_qp_smoke
+    wbic_mapping_smoke
+    wbic_safety_benchmark_smoke
+    wbic_contact_schedule_smoke
+    standing_contact_estimator_smoke
+    wbic_internal_mapping_smoke
+    wbic_qp_contact_transition_smoke
+    wbic_integration_smoke
+)
 
-    echo \"\n\033[1;32m=== [3/3] RUNNING LITE3 GMO/GRF TEST ===\033[0m\"
-    ./lite3_gmo_smoke
-'"
+REMOTE_COMMAND="cd '${REMOTE_DEST_DIR}' && export LD_LIBRARY_PATH='${REMOTE_DEST_DIR}':\${LD_LIBRARY_PATH:-}"
+for test_name in "${REMOTE_TESTS[@]}"; do
+    REMOTE_COMMAND+=" && printf '\\n=== RUNNING ${test_name} ===\\n' && ./${test_name}"
+done
+
+ssh -t "${REMOTE_HOST}" "bash -lc \"${REMOTE_COMMAND}\""
 
 echo -e "\n${BOLD}${GREEN}================================================================${NC}"
-echo -e "${BOLD}${GREEN}  HOAN TAT: Pinocchio va Boost Header-Only da verify tren Lite3! ${NC}"
+echo -e "${BOLD}${GREEN}  DONE: ARM64 build, deploy, and smoke tests passed.              ${NC}"
 echo -e "${BOLD}${GREEN}================================================================${NC}\n"

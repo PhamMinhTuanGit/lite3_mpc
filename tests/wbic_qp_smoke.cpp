@@ -133,6 +133,30 @@ int main()
             std::cerr << "Case 1: Total Fz (" << total_fz << ") does not match mg (" << expected_fz << ")" << std::endl;
             return 6;
         }
+
+        wbic::WbicConfig locked_config = config;
+        locked_config.max_wsr = 200;
+        locked_config.max_cpu_time = 0.01;
+        wbic::WbicQp locked_qp(locked_config);
+        wbic::WbicQpResult locked_res;
+        input.standing_mode = true;
+        const bool locked_ok = locked_qp.Solve(
+            input, dyn, contact_set, kin_res.qddot_cmd, kin_res.q_des,
+            kin_res.dq_des, idx_v, locked_config, &locked_res);
+        std::cout << "Full-stance A/B: unlocked{kin="
+                  << qp_res.residuals.kin_contact_acc_residual_norm
+                  << ", final=" << qp_res.residuals.contact_acc_residual_norm
+                  << ", delta=" << qp_res.residuals.delta_qddot_u_norm
+                  << "} locked{ok=" << locked_ok
+                  << ", kin=" << locked_res.residuals.kin_contact_acc_residual_norm
+                  << ", final=" << locked_res.residuals.contact_acc_residual_norm
+                  << ", delta=" << locked_res.residuals.delta_qddot_u_norm << "}"
+                  << std::endl;
+        if (!locked_ok || locked_res.residuals.delta_qddot_u_norm > 1e-9) {
+            std::cerr << "Official standing full-stance delta-qddot lock failed" << std::endl;
+            return 12;
+        }
+        input.standing_mode = false;
     }
 
     // ─────────────────────────────────────────────────────────────────

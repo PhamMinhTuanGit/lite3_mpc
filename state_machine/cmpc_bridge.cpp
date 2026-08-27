@@ -28,6 +28,31 @@ public:
         if (controller_) controller_->SetWbicEnabled(enabled);
     }
 
+    void SetStandingTestMode(wbic::StandingTestMode mode)
+    {
+        if (controller_) controller_->SetStandingTestMode(mode);
+    }
+
+    void SetStandingDiagnosticCsvPath(const std::string& path)
+    {
+        if (controller_) controller_->SetStandingDiagnosticCsvPath(path);
+    }
+
+    void SetUseCentroidalWrench(bool enable)
+    {
+        if (controller_) controller_->SetUseCentroidalWrench(enable);
+    }
+
+    void SetPayloadConfig(const wbic::PayloadConfig& cfg)
+    {
+        if (controller_) controller_->SetPayloadConfig(cfg);
+    }
+
+    void SetForceRateWeight(double w)
+    {
+        if (controller_) controller_->SetForceRateWeight(w);
+    }
+
     bool IsWbicEnabled() const
     {
         return controller_ ? controller_->IsWbicEnabled() : false;
@@ -80,6 +105,31 @@ void CMPCBridge::SetRobotVel(double* vel3)
 void CMPCBridge::SetWbicEnabled(bool enabled)
 {
     if (impl_) impl_->SetWbicEnabled(enabled);
+}
+
+void CMPCBridge::SetStandingTestMode(wbic::StandingTestMode mode)
+{
+    if (impl_) impl_->SetStandingTestMode(mode);
+}
+
+void CMPCBridge::SetStandingDiagnosticCsvPath(const std::string& path)
+{
+    if (impl_) impl_->SetStandingDiagnosticCsvPath(path);
+}
+
+void CMPCBridge::SetUseCentroidalWrench(bool enable)
+{
+    if (impl_) impl_->SetUseCentroidalWrench(enable);
+}
+
+void CMPCBridge::SetPayloadConfig(const wbic::PayloadConfig& cfg)
+{
+    if (impl_) impl_->SetPayloadConfig(cfg);
+}
+
+void CMPCBridge::SetForceRateWeight(double w)
+{
+    if (impl_) impl_->SetForceRateWeight(w);
 }
 
 bool CMPCBridge::IsWbicEnabled() const

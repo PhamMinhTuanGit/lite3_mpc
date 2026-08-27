@@ -270,15 +270,15 @@ bool RobotModel::build(const RobotModelConfig& cfg, std::string* err) {
   data_ = pinocchio::Data(model_);
 
   // --- Armature: giữ riêng, cộng vào chéo M sau crba ---
-  armature_ = VecX::Zero(kNv);
+  armature_ = VecXd::Zero(kNv);
   for (int k = 0; k < kNumJoints; ++k) armature_[idx_v_[k]] = cfg.armature;
 
   mass_   = totalMass(model_);
   I_body_ = model_.inertias[1].inertia().matrix();   // joint 1 = freeflyer = base
 
   // --- Pre-allocate toàn bộ, hot path không cấp phát ---
-  q_ = VecX::Zero(kNq);  q_[6] = 1.0;          // quat xyzw -> w = 1
-  v_ = VecX::Zero(kNv);  a0_ = VecX::Zero(kNv);
+  q_ = VecXd::Zero(kNq);  q_[6] = 1.0;          // quat xyzw -> w = 1
+  v_ = VecXd::Zero(kNv);  a0_ = VecXd::Zero(kNv);
   M_.setZero(kNv, kNv);  h_.setZero(kNv);
   Jc_.setZero(3 * kNumLegs, kNv);  dJv_.setZero(3 * kNumLegs);
   Jb_.setZero(6, kNv);   Jtmp_.setZero(6, kNv);
@@ -288,10 +288,10 @@ bool RobotModel::build(const RobotModelConfig& cfg, std::string* err) {
 // ═══════════════════════════════════════════════════════════════════════════
 //  3. UPDATE MỖI CHU KỲ
 // ═══════════════════════════════════════════════════════════════════════════
-void RobotModel::setState(const Vec3& p_world, const Eigen::Quaterniond& q_wb,
-                          const Vec3& v_lin_world, const Vec3& omega_world,
-                          const Eigen::Ref<const Vec12>& qj,
-                          const Eigen::Ref<const Vec12>& dqj) {
+void RobotModel::setState(const Vec3d& p_world, const Eigen::Quaterniond& q_wb,
+                          const Vec3d& v_lin_world, const Vec3d& omega_world,
+                          const Eigen::Ref<const Vec12d>& qj,
+                          const Eigen::Ref<const Vec12d>& dqj) {
   const Eigen::Quaterniond qn = q_wb.normalized();
   R_wb_ = qn.toRotationMatrix();
 
@@ -313,6 +313,7 @@ void RobotModel::updateKinematics() {
   // a = 0  ->  classical acceleration của frame CHÍNH LÀ J̇·v
   // (đừng dùng spatial acceleration: thiếu số hạng tích chéo)
   pinocchio::forwardKinematics(model_, data_, q_, v_, a0_);
+  pinocchio::centerOfMass(model_, data_, q_, v_, false);
   pinocchio::computeJointJacobians(model_, data_);      // dùng oMi đã có, khỏi FK lần 2
   pinocchio::updateFramePlacements(model_, data_);
 
@@ -348,19 +349,19 @@ void RobotModel::updateDynamics() {
 // ═══════════════════════════════════════════════════════════════════════════
 //  Tiện ích
 // ═══════════════════════════════════════════════════════════════════════════
-Vec12 RobotModel::jointTorque(const Eigen::Ref<const VecX>& qddot,
-                              const Eigen::Ref<const VecX>& fc) const {
-  const VecX tau_pin = M_.bottomRows<12>() * qddot + h_.tail<12>()
-                     - Jc_.rightCols<12>().transpose() * fc;
-  Vec12 tau_hw;
+Vec12d RobotModel::jointTorque(const Eigen::Ref<const VecXd>& qddot,
+                               const Eigen::Ref<const VecXd>& fc) const {
+  const VecXd tau_pin = M_.bottomRows<12>() * qddot + h_.tail<12>()
+                      - Jc_.rightCols<12>().transpose() * fc;
+  Vec12d tau_hw;
   for (int k = 0; k < kNumJoints; ++k) tau_hw[k] = tau_pin[idx_v_[k] - 6];
   return tau_hw;
 }
 
-Vec3 RobotModel::footPos(int leg) const {
+Vec3d RobotModel::footPos(int leg) const {
   return data_.oMf[foot_fid_[leg]].translation();
 }
-Vec3 RobotModel::footVel(int leg) const {
+Vec3d RobotModel::footVel(int leg) const {
   return pinocchio::getFrameVelocity(model_, const_cast<pinocchio::Data&>(data_), foot_fid_[leg],
                                      pinocchio::LOCAL_WORLD_ALIGNED).linear();
 }

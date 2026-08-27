@@ -68,27 +68,31 @@ public:
         tcgetattr(STDIN_FILENO, &oldt);
         newt = oldt;
         newt.c_lflag &= ~(ICANON | ECHO);
+        newt.c_cc[VMIN] = 0;
+        newt.c_cc[VTIME] = 1; // 100 ms timeout
         tcsetattr(STDIN_FILENO, TCSANOW, &newt);
 
+        const bool auto_start = (std::getenv("LITE3_AUTO_START") != nullptr);
         char input;
         double forward_time_record = GetCurrentTimeStamp();
         double side_time_record = GetCurrentTimeStamp();
         double turnning_time_record = GetCurrentTimeStamp();
         double reserved_time_record = GetCurrentTimeStamp();
-        std::cout << "Start Keyboard Listening" << std::endl;
+        std::cout << "Start Keyboard Listening (auto_start=" << (auto_start ? "ON" : "OFF") << ")" << std::endl;
         while (start_thread_flag_) {
-            // std::cout << "time: " << current_time << " " << forward_time_record << std::endl;
-            // std::cout << "[Keyboard] Running..." << std::endl;
-            if(read(STDIN_FILENO, &input, 1) != -1){
-                double current_time = GetCurrentTimeStamp();
-                // std::lock_guard<std::mutex> lock(mtx_);  // 修改 usr_cmd_ 和读取 msfb_
+            double current_time = GetCurrentTimeStamp();
+            if (auto_start) {
+                if (msfb_.current_state == RobotMotionState::WaitingForStand && current_time > 500.0) {
+                    usr_cmd_.target_mode = int(RobotMotionState::StandingUp);
+                } else if (msfb_.current_state == RobotMotionState::StandingUp && current_time > 4500.0) {
+                    usr_cmd_.target_mode = int(RobotMotionState::CMPC);
+                }
+            }
 
-                // std::cout << "input: " << input << std::endl;
+            if (read(STDIN_FILENO, &input, 1) > 0) {
                 if(input == 'r'){
                     usr_cmd_.target_mode = int(RobotMotionState::JointDamping);
                 }
-                // usr_cmd_.down_shift = false;
-                // usr_cmd_.up_shift = false;
                 switch(msfb_.current_state) {
                     case RobotMotionState::WaitingForStand:
                         if(input=='z'){

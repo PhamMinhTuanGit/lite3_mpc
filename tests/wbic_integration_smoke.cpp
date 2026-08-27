@@ -37,12 +37,34 @@ int main()
         motorData[12 + leg * 3 + 2] = 0.0;
     }
 
+    // Exercise TEST_A on an isolated controller because legacy hybrid commands are
+    // torque-only; feeding their zero q_des back into this synthetic harness would
+    // create an artificial joint-limit latch before the WBIC stages.
+    {
+        GaitCtrller legacy_controller(500.0, pidParam, true);
+        legacy_controller.SetGaitType(0);
+        legacy_controller.SetRobotMode(0);
+        legacy_controller.SetRobotVel(target_vel);
+        legacy_controller.SetStandingTestMode(wbic::StandingTestMode::TestALegacy);
+        if (legacy_controller.IsWbicEnabled()) {
+            std::cerr << "TEST_A_LEGACY unexpectedly enabled WBIC" << std::endl;
+            return 6;
+        }
+        wbic::JointHybridCommand legacy_hybrid;
+        double legacy_effort[12] = {};
+        legacy_controller.TorqueCalculator(imuData, motorData, legacy_effort, &legacy_hybrid);
+    }
+
     constexpr int kSimSteps = 1000; // 2.0 seconds at 500 Hz
     wbic::JointHybridCommand hybridCmd;
     double effort[12] = {};
 
     for (int step = 0; step < kSimSteps; ++step) {
+        if (step == 250) {
+            controller.SetStandingTestMode(wbic::StandingTestMode::TestCWbicLockBase);
+        }
         if (step == 500) {
+            controller.SetStandingTestMode(wbic::StandingTestMode::TestBWbicNormal);
             target_vel[0] = 0.1; // gentle forward walk
             controller.SetRobotVel(target_vel);
         }
@@ -88,6 +110,6 @@ int main()
         return 5;
     }
 
-    std::cout << "[TEST] wbic_integration_smoke PASSED! (1,000 steps executed cleanly)" << std::endl;
+    std::cout << "[TEST] wbic_integration_smoke PASSED! (standing A/B/C exercised)" << std::endl;
     return 0;
 }

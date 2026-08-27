@@ -72,6 +72,8 @@ bool KinWbc::Compute(const WbicInput& input,
 
     result->task_stack.reset();
     result->qddot_cmd.setZero();
+    result->orientation_error.setZero();
+    result->x_ddot_ori.setZero();
     result->delta_q.setZero();
     result->q_des.setZero();
     result->dq_des.setZero();
@@ -178,6 +180,8 @@ bool KinWbc::Compute(const WbicInput& input,
         const Eigen::Vector3d e_ori = RotationErrorSO3(input.R_body_des, dyn.R_wb);
         const Eigen::Vector3d de_ori = input.omega_body_des - dyn.omega_b_world;
         const Eigen::Vector3d x_ddot_ori = input.domega_body_des + config.kp_body_ori * e_ori + config.kd_body_ori * de_ori;
+        result->orientation_error = e_ori;
+        result->x_ddot_ori = x_ddot_ori;
 
         const Eigen::Matrix<double, 3, kVelocityDimension> J_ori = dyn.Jb.bottomRows<3>();
         const Eigen::Vector3d dJ_ori_qdot = dyn.dJdq_b.tail<3>();
@@ -226,6 +230,13 @@ bool KinWbc::Compute(const WbicInput& input,
     }
 
     result->qddot_cmd = qddot_cur_;
+    if (contact_set.nc > 0) {
+        const int dc = contact_set.nc * 3;
+        const Eigen::VectorXd contact_acc =
+            contact_set.Jc.topRows(dc) * result->qddot_cmd
+            + contact_set.dJdq_c.head(dc);
+        result->contact_acc_residual_norm = contact_acc.lpNorm<Eigen::Infinity>();
+    }
 
     // Map Pinocchio tangent-space corrections back to public WBC joint order.
     for (int k = 0; k < kNumJoints; ++k) {

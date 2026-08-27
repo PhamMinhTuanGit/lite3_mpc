@@ -89,14 +89,20 @@ bool WbicQp::Solve(const WbicInput& input,
 
     // ══════════════════════════════════════════════════════════════════════
     // 2. Variable Bounds lb <= z <= ub
+    const bool full_stance = std::all_of(input.contact.begin(), input.contact.end(),
+                                         [](bool contact) { return contact; });
+    // Official standing formulation: preserve the KinWBC base acceleration
+    // exactly only for commanded standing with all four planned contacts.
+    // A transient four-contact interval in a walking gait must not enable it.
+    const bool lock_base_acceleration = input.standing_mode && full_stance;
     // ══════════════════════════════════════════════════════════════════════
     for (int i = 0; i < 3; ++i) {
-        lb_mem_[i] = -config.delta_qddot_lin_max;
-        ub_mem_[i] = config.delta_qddot_lin_max;
+        lb_mem_[i] = lock_base_acceleration ? 0.0 : -config.delta_qddot_lin_max;
+        ub_mem_[i] = lock_base_acceleration ? 0.0 : config.delta_qddot_lin_max;
     }
     for (int i = 3; i < 6; ++i) {
-        lb_mem_[i] = -config.delta_qddot_ang_max;
-        ub_mem_[i] = config.delta_qddot_ang_max;
+        lb_mem_[i] = lock_base_acceleration ? 0.0 : -config.delta_qddot_ang_max;
+        ub_mem_[i] = lock_base_acceleration ? 0.0 : config.delta_qddot_ang_max;
     }
     for (int leg = 0; leg < kNumLegs; ++leg) {
         const int f_idx = 6 + leg * 3;
@@ -265,6 +271,8 @@ bool WbicQp::Solve(const WbicInput& input,
                                   lbA_mem_, ubA_mem_, nWSR, &cputime);
     }
 
+    result->wsr_performed = nWSR;
+
     if (status_qp == qpOASES::SUCCESSFUL_RETURN) {
         is_initialized_ = true;
         solver_->getPrimalSolution(z_opt_);
@@ -283,14 +291,13 @@ bool WbicQp::Solve(const WbicInput& input,
         return false;
     }
 
-    result->wsr_performed = nWSR;
-
     // ══════════════════════════════════════════════════════════════════════
     // 6. Extract Solution & Reconstruct Accelerations, Forces and Torques
     // ══════════════════════════════════════════════════════════════════════
     for (int i = 0; i < 6; ++i) {
         result->delta_qddot_u[i] = z_opt_[i];
     }
+    result->residuals.delta_qddot_u_norm = result->delta_qddot_u.norm();
     for (int i = 0; i < 12; ++i) {
         result->f_opt[i] = z_opt_[6 + i];
     }
@@ -342,7 +349,10 @@ bool WbicQp::Solve(const WbicInput& input,
         const int dc = contact_set.nc * 3;
         const auto Jc = contact_set.Jc.topRows(dc);
         const auto dJc_qdot = contact_set.dJdq_c.head(dc);
+        const Eigen::VectorXd kin_contact_acc = Jc * qddot_cmd + dJc_qdot;
         const Eigen::VectorXd contact_acc = Jc * result->qddot + dJc_qdot;
+        result->residuals.kin_contact_acc_residual_norm =
+            kin_contact_acc.lpNorm<Eigen::Infinity>();
         result->residuals.contact_acc_residual_norm = contact_acc.lpNorm<Eigen::Infinity>();
     } else {
         result->residuals.contact_acc_residual_norm = 0.0;
