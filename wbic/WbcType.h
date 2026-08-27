@@ -445,9 +445,9 @@ struct WbicConfig {
 
     // Task PD gains
     double kp_body_pos = 100.0;
-    double kd_body_pos = 10.0;
+    double kd_body_pos = 20.0;
     double kp_body_ori = 100.0;
-    double kd_body_ori = 10.0;
+    double kd_body_ori = 20.0;
     double kp_foot = 500.0;
     double kd_foot = 10.0;
 

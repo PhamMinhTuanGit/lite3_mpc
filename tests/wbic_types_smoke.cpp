@@ -96,6 +96,9 @@ int main()
     // Verify WbicConfig defaults
     wbic::WbicConfig config;
     if (std::abs(config.kp_body_pos - 100.0) > 1e-6 ||
+        std::abs(config.kd_body_pos - 20.0) > 1e-6 ||
+        std::abs(config.kp_body_ori - 100.0) > 1e-6 ||
+        std::abs(config.kd_body_ori - 20.0) > 1e-6 ||
         std::abs(config.kp_foot - 500.0) > 1e-6 ||
         std::abs(config.mu - 0.4) > 1e-6) {
         std::cerr << "WbicConfig default parameter mismatch" << std::endl;

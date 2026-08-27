@@ -111,13 +111,11 @@ public:
         const std::string activation_key = "~/raisim/activation.raisim";
         std::string urdf_path = "";
         std::string mjcf_path = "";
-        // #ifdef BUILD_SIMULATION
-        //     uc_ptr_ = std::make_shared<KeyboardInterface>();
-        // #else
-        //     uc_ptr_ = std::make_shared<RetroidGamepadInterface>(12121);
-        // #endif
-        uc_ptr_ = std::make_shared<KeyboardInterface>();
-        // uc_ptr_ = std::make_shared<RetroidGamepadInterface>(12121);
+        #ifdef BUILD_SIMULATION
+            uc_ptr_ = std::make_shared<KeyboardInterface>();
+        #else
+            uc_ptr_ = std::make_shared<RetroidGamepadInterface>(12121);
+        #endif
         if(robot_type == RobotType::Lite3){
             urdf_path = GetAbsPath()+"/../third_party/URDF_model/lite3_urdf/Lite3/urdf/Lite3.urdf";
             mjcf_path = GetAbsPath()+"third_party/URDF_model/Lite3/Lite3_mjcf/mjcf/Lite3.xml";

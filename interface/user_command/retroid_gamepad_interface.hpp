@@ -90,6 +90,9 @@ void RetroidGamepadInterface::TransformRetroidToUserCommand(){
                 }
                 break;
             case RobotMotionState::CMPC:
+                if(rt_keys_.B != rt_keys_record_.B && rt_keys_.B){
+                    usr_cmd_.target_mode = int(RobotMotionState::SitDown);
+                }
                 break;
             
             default:

@@ -192,12 +192,25 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
 
     auto &seResult = _stateEstimator.getResult(); //状态估计器
 
+    // Check if commanded velocity is near zero -> stand still on 4 legs instead of trotting in place
+    const float v_des_norm = std::sqrt(_x_vel_des * _x_vel_des + _y_vel_des * _y_vel_des);
+    const float yaw_des_norm = std::fabs(_yaw_turn_rate);
+    const bool is_zero_cmd = (v_des_norm < 0.03f && yaw_des_norm < 0.03f);
+
+    if (robotMode == 0 && (gaitNumber == 0 || gaitNumber == 9 || gaitNumber == 5 || gaitNumber == 10 || gaitNumber == 11))
+    {
+        if (is_zero_cmd)
+        {
+            gaitNumber = 4; // Standing
+        }
+    }
+
     // Check if transition to standing 检查是否过渡到站立
     if (((gaitNumber == 4) && current_gait != 4) || firstRun)
     {
         stand_traj[0] = seResult.position[0];
         stand_traj[1] = seResult.position[1];
-        stand_traj[2] = 0.29;
+        stand_traj[2] = _body_height;
         stand_traj[3] = 0;
         stand_traj[4] = 0;
         stand_traj[5] = seResult.rpy[2];
@@ -386,7 +399,7 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
 
         for (int i = 0; i < 4; i++) // Foot swing trajectory
         {
-            footSwingTrajectories[i].setHeight(0.15);
+            footSwingTrajectories[i].setHeight(0.10);
             footSwingTrajectories[i].setInitialPosition(pFoot[i]); // set p0
             footSwingTrajectories[i].setFinalPosition(pFoot[i]);   // set pf
         }
@@ -427,9 +440,8 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
 
         // ── 2. Swing height ───────────────────────────────────────────────────
         // Chiều cao tối đa của Bezier swing trajectory (m).
-        // Lite3: tăng lên 0.15m để tránh va chạm chân-chân ở tốc độ cao
-        // và để đủ clearance trên địa hình rough.
-        footSwingTrajectories[i].setHeight(0.15);
+        // Đặt 0.10m (10cm) theo cấu hình bước chân Lite3.
+        footSwingTrajectories[i].setHeight(0.10);
 
         // ── 3. Hip location trong body frame ──────────────────────────────────
         // Offset ngang = abadLinkLength (khoảng cách abad joint → hip joint theo Y).
@@ -459,7 +471,8 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
 
         // float p_rel_max = 0.3f; // giới hạn step offset tối đa [m]
         // float p_rel_max = 0.05f; // giới hạn step offset tối đa [m]
-        float p_rel_max = 0.005f; // giới hạn step offset tối đa [m]
+        float pfx_rel_max = 0.010f; // giới hạn step offset trục X tối đa [m]
+        float pfy_rel_max = 0.010f; // giới hạn step offset trục Y tối đa [m]
 
         // ── 6. Raibert symmetry + capture point correction ────────────────────
 
@@ -492,10 +505,10 @@ void ConvexMPCLocomotion::run(Quadruped<float> &_quadruped,
                         (0.5f * sqrtf(seResult.position[2] / 9.81f)) * (-seResult.vWorld[0] * _yaw_turn_rate);
 
         // ── 7. Clamp offset ───────────────────────────────────────────────────
-        // Giới hạn step offset trong [-p_rel_max, p_rel_max] = [-0.3, 0.3] m
+        // Giới hạn riêng step offset theo từng trục
         // Tránh lệnh đặt chân quá xa gây mất thăng bằng hoặc QP infeasible
-        pfx_rel = fminf(fmaxf(pfx_rel, -p_rel_max), p_rel_max);
-        pfy_rel = fminf(fmaxf(pfy_rel, -p_rel_max), p_rel_max);
+        pfx_rel = fminf(fmaxf(pfx_rel, -pfx_rel_max), pfx_rel_max);
+        pfy_rel = fminf(fmaxf(pfy_rel, -pfy_rel_max), pfy_rel_max);
 
         // ── 8. Final foot position ────────────────────────────────────────────
         // Cộng Raibert offset vào vị trí hip world đã extrapolate
@@ -761,7 +774,7 @@ void ConvexMPCLocomotion::solveDenseMPC(int *mpcTable, StateEstimatorContainer<f
 
     //   float Q[12] = {2.5, 2.5, 10, 2, 2, 40, 0, 0, 0.3, 0.2, 0.2, 0.2};
     //   float Q[12] = {2.5, 2.5, 1000, 2, 2, 400, 0.1, 0.1, 0.3, 0.2, 0.2, 0.2}; // okie for 4s standing
-    float Q[12] = {2.5, 2.5, 100, 2, 1, 400, 0.1, 0.1, 0.3, 0.2, 0.2, 0.2};
+    float Q[12] = {4.0, 2.5, 100, 2, 2.0, 400, 0.1, 0.1, 0.3, 0.2, 0.4, 0.2};
     // float Q[12] = {0, 0, 0, 10, 10, 10, 0, 0, 0, 0, 0, 0};
 
     // float Q[12] = {0.25, 0.25, 10, 2, 2, 40, 0, 0, 0.3, 0.2, 0.2, 0.2};
