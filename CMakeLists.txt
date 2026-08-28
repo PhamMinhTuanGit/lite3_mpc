@@ -369,6 +369,30 @@ if(BUILD_TESTS)
   )
   add_test(NAME wbic_dynamics_smoke COMMAND wbic_dynamics_smoke)
 
+  # Payload free-flyer dynamics must remain entirely in Pinocchio's BODY frame.
+  add_executable(wbic_payload_dynamics_frame_regression
+    tests/wbic_payload_dynamics_frame_regression.cpp
+    robot_model/RobotModel.cpp
+    wbic/KinWbc.cpp
+    wbic/WbicQp.cpp
+    wbic/WbicController.cpp
+  )
+  target_include_directories(wbic_payload_dynamics_frame_regression PRIVATE
+    ${THIRD_PARTY}/boost_1_84_0
+    ${THIRD_PARTY}
+    ${THIRD_PARTY}/eigen
+    /usr/include/eigen3
+    cmpc_ctrl/src/qpOASES/include
+    robot_model
+    wbic
+  )
+  target_link_libraries(wbic_payload_dynamics_frame_regression
+    qpOASES
+    -lpthread -lm -lrt -ldl -lstdc++
+  )
+  add_test(NAME wbic_payload_dynamics_frame_regression
+           COMMAND wbic_payload_dynamics_frame_regression)
+
   # 6. WBIC Hierarchical KinWBC test
   add_executable(wbic_kin_smoke
     tests/wbic_kin_smoke.cpp
@@ -563,4 +587,27 @@ if(BUILD_TESTS)
     -lpthread -lm -lrt -ldl -lstdc++
   )
   add_test(NAME centroidal_wrench_wbc_smoke COMMAND centroidal_wrench_wbc_smoke)
+
+  # Phase-2 diagnostic: observe Centroidal GRFs before and after WbicQp.
+  add_executable(wbic_phase2_force_telemetry
+    tests/wbic_phase2_force_telemetry.cpp
+    robot_model/RobotModel.cpp
+    wbic/KinWbc.cpp
+    wbic/WbicQp.cpp
+    wbic/WbicController.cpp
+    wbic/CentroidalWrenchController.cpp
+  )
+  target_include_directories(wbic_phase2_force_telemetry PRIVATE
+    ${THIRD_PARTY}/boost_1_84_0
+    ${THIRD_PARTY}
+    ${THIRD_PARTY}/eigen
+    /usr/include/eigen3
+    cmpc_ctrl/src/qpOASES/include
+    robot_model
+    wbic
+  )
+  target_link_libraries(wbic_phase2_force_telemetry
+    qpOASES
+    -lpthread -lm -lrt -ldl -lstdc++
+  )
 endif()

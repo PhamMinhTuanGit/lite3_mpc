@@ -122,7 +122,8 @@ private:
                                bool wbic_success,
                                const double* selected_tau_ff,
                                const wbic::JointHybridCommand* selected_command,
-                               uint64_t tick_sequence);
+                               uint64_t tick_sequence,
+                               uint64_t wbic_start_wall_ns);
 };
 
 #endif

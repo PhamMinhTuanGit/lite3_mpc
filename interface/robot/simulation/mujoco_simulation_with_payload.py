@@ -29,6 +29,7 @@ RENDER_INTERVAL = 10
 #   sim_time, world_x, world_y, world_z, vx, vy, vz
 BASELOG_PATH = os.environ.get("BASELOG_PATH")        # None = không ghi
 BASELOG_INTERVAL = int(os.environ.get("BASELOG_INTERVAL", "50"))  # số step giữa 2 sample (50 -> 50 ms)
+TIMING_LOG_PATH = os.environ.get("PHASE5_TIMING_LOG")
 
 
 # ── GMO validation scenario (simulation only, controller model unchanged) ───
@@ -106,6 +107,12 @@ class MuJoCoSimulation:
         self.last_base_linvel = np.zeros((3, 1), np.float64)
         self.timestamp = 0.0
         self.last_print_time = 0  # Track last print time
+        self.sensor_timing_events = []
+        self.command_receive_events = []
+        self.command_apply_events = []
+        self.command_sequence = 0
+        self.last_applied_command_sequence = 0
+        self.last_command_packet = None
 
         print(f"[INFO] MuJoCo model loaded, scenario={GMO_SCENARIO}, "
               f"payload={ENABLE_PAYLOAD}, dof={self.dof_num}")
@@ -119,7 +126,9 @@ class MuJoCoSimulation:
         self.baselog_fp = None
         if BASELOG_PATH:
             self.baselog_fp = open(BASELOG_PATH, "w")
-            self.baselog_fp.write("sim_time,world_x,world_y,world_z,vx,vy,vz\n")
+            self.baselog_fp.write(
+                "sim_time,world_x,world_y,world_z,vx,vy,vz,pitch,omega_y\n"
+            )
             self.baselog_fp.flush()
             print(f"[INFO] Base-state log enabled -> {BASELOG_PATH} (every {BASELOG_INTERVAL} steps)")
 
@@ -195,6 +204,7 @@ class MuJoCoSimulation:
                 self.timestamp = step * DT
                 if SIM_DURATION > 0 and self.timestamp >= SIM_DURATION:
                     print(f"[INFO] SIM_DURATION={SIM_DURATION}s reached, stopping simulation.")
+                    self._write_timing_log()
                     break
 
                 # 采样 & 发送观测
@@ -203,8 +213,14 @@ class MuJoCoSimulation:
                 if self.baselog_fp and step % BASELOG_INTERVAL == 0:
                     bp = self.data.qpos[0:3]
                     bv = self.data.qvel[0:3]
+                    q_world = self.data.qpos[3:7]
+                    pitch = self.quaternion_to_euler(q_world)[1]
+                    rotation_flat = np.zeros(9, dtype=np.float64)
+                    mujoco.mju_quat2Mat(rotation_flat, q_world.astype(np.float64))
+                    omega_world = rotation_flat.reshape(3, 3) @ self.data.qvel[3:6]
                     self.baselog_fp.write(
-                        f"{self.timestamp },{bp[0]},{bp[1]},{bp[2]},{bv[0]},{bv[1]},{bv[2]}\n")
+                        f"{self.timestamp},{bp[0]},{bp[1]},{bp[2]},"
+                        f"{bv[0]},{bv[1]},{bv[2]},{pitch},{omega_world[1]}\n")
                     self.baselog_fp.flush()
                 # 可视化
                 if self.viewer and step % RENDER_INTERVAL == 0:
@@ -228,6 +244,12 @@ class MuJoCoSimulation:
             if len(data) < expected:
                 print(f"[WARN] UDP packet size {len(data)} != {expected}")
                 continue
+            if data != self.last_command_packet:
+                self.last_command_packet = data
+                self.command_sequence += 1
+                self.command_receive_events.append(
+                    (self.command_sequence, self.timestamp, time.monotonic_ns())
+                )
             unpacked = struct.unpack(fmt, data)
             self.kp_cmd = np.asarray(unpacked[0:self.dof_num], dtype=np.float32).reshape(self.dof_num, 1)
             self.pos_cmd = np.asarray(unpacked[self.dof_num:self.dof_num * 2], dtype=np.float32).reshape(self.dof_num,
@@ -239,6 +261,11 @@ class MuJoCoSimulation:
             self.tau_ff = np.asarray(unpacked[self.dof_num * 4:], dtype=np.float32).reshape(self.dof_num, 1)
 
     def _apply_joint_torque(self):
+        if self.command_sequence != self.last_applied_command_sequence:
+            self.last_applied_command_sequence = self.command_sequence
+            self.command_apply_events.append(
+                (self.command_sequence, self.timestamp, time.monotonic_ns())
+            )
         # Current joint states
         q = self.data.qpos[7:7+self.dof_num].reshape(-1, 1)
         dq = self.data.qvel[6:6+self.dof_num].reshape(-1, 1)
@@ -321,10 +348,27 @@ class MuJoCoSimulation:
         ))
         fmt = "1d" + f"{len(payload)-1}f"
         try:
+            self.sensor_timing_events.append((step, self.timestamp, time.monotonic_ns()))
             self.send_sock.sendto(struct.pack(fmt, *payload),
                                   self.ctrl_addr)
         except socket.error as ex:
             print(f"[UDP send] {ex}")
+
+    def _write_timing_log(self):
+        if not TIMING_LOG_PATH:
+            return
+        events = []
+        events.extend((wall_ns, "sensor_send", seq, sim_time)
+                      for seq, sim_time, wall_ns in self.sensor_timing_events)
+        events.extend((wall_ns, "command_receive", seq, sim_time)
+                      for seq, sim_time, wall_ns in self.command_receive_events)
+        events.extend((wall_ns, "command_apply", seq, sim_time)
+                      for seq, sim_time, wall_ns in self.command_apply_events)
+        events.sort(key=lambda event: event[0])
+        with open(TIMING_LOG_PATH, "w") as timing_file:
+            timing_file.write("event,sequence,sim_time,wall_ns\n")
+            for wall_ns, event, sequence, sim_time in events:
+                timing_file.write(f"{event},{sequence},{sim_time},{wall_ns}\n")
 
 
 if __name__ == "__main__":

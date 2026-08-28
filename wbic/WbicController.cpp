@@ -7,8 +7,45 @@
 #include "KinWbc.hpp"
 #include "RobotModel.hpp"
 #include "WbicQp.hpp"
+#include "WbicControllerInternal.hpp"
 
 namespace wbic {
+
+namespace detail {
+
+void AugmentPayloadDynamicsBodyFrame(
+    const PayloadConfig& payload_config,
+    const Eigen::Matrix3d& R_body,
+    Eigen::Matrix<double, kVelocityDimension, kVelocityDimension>* M,
+    GeneralizedVelocity* h) noexcept
+{
+    if (!payload_config.enabled || payload_config.mass <= 0.0
+        || M == nullptr || h == nullptr) {
+        return;
+    }
+
+    constexpr double kGravity = 9.81;
+    const double mp = payload_config.mass;
+    const Eigen::Vector3d r_b = payload_config.com_body;
+    const Eigen::Vector3d f_g_world(0.0, 0.0, mp * kGravity);
+    const Eigen::Vector3d f_g_body = R_body.transpose() * f_g_world;
+    const Eigen::Vector3d tau_g_body = r_b.cross(f_g_body);
+
+    h->segment<3>(0) += f_g_body;
+    h->segment<3>(3) += tau_g_body;
+
+    Eigen::Matrix3d r_b_cross;
+    r_b_cross <<     0.0, -r_b(2),  r_b(1),
+                    r_b(2),      0.0, -r_b(0),
+                   -r_b(1),  r_b(0),      0.0;
+
+    M->block<3, 3>(0, 0).diagonal().array() += mp;
+    M->block<3, 3>(3, 3) += mp * (r_b_cross.transpose() * r_b_cross);
+    M->block<3, 3>(0, 3) += mp * r_b_cross.transpose();
+    M->block<3, 3>(3, 0) += mp * r_b_cross;
+}
+
+}  // namespace detail
 
 class WbicController::Impl {
 public:
@@ -89,26 +126,8 @@ public:
         dyn_output_.M = robot_model_.M();
         dyn_output_.h = robot_model_.h();
 
-        if (input.payload_config.enabled && input.payload_config.mass > 0.0) {
-            constexpr double kGravity = 9.81;
-            const double mp = input.payload_config.mass;
-            const Eigen::Vector3d rp_world = input.R_body * input.payload_config.com_body;
-            const Eigen::Vector3d fg_world(0.0, 0.0, mp * kGravity);
-            const Eigen::Vector3d tau_g_world = rp_world.cross(fg_world);
-
-            dyn_output_.h.segment<3>(0) += fg_world;
-            dyn_output_.h.segment<3>(3) += tau_g_world;
-
-            Eigen::Matrix3d rx;
-            rx <<         0.0, -rp_world(2),  rp_world(1),
-                  rp_world(2),          0.0, -rp_world(0),
-                 -rp_world(1),  rp_world(0),          0.0;
-
-            dyn_output_.M.block<3, 3>(0, 0).diagonal().array() += mp;
-            dyn_output_.M.block<3, 3>(3, 3) += mp * (rx.transpose() * rx);
-            dyn_output_.M.block<3, 3>(0, 3) += mp * rx.transpose();
-            dyn_output_.M.block<3, 3>(3, 0) += mp * rx;
-        }
+        detail::AugmentPayloadDynamicsBodyFrame(
+            input.payload_config, input.R_body, &dyn_output_.M, &dyn_output_.h);
 
         // Compute M_inv
         Eigen::Matrix<double, kVelocityDimension, kVelocityDimension> M_damped = dyn_output_.M;

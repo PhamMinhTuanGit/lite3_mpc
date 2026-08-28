@@ -2,6 +2,7 @@
 #include "Utilities/Timer.h"
 #include "RobotModel.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <iomanip>
@@ -154,6 +155,7 @@ void GaitCtrller::OpenDiagnosticCsvIfNeeded()
         << "time,test_mode,roll,pitch,yaw,omega_x,omega_y,omega_z,"
         << "body_x,body_y,body_z,vx,vy,vz,"
         << "pitch_des,pitch_actual,pitch_error,orientation_error_y,x_ddot_ori_y,"
+        << "qddot_cmd_z,qddot_cmd_pitch,"
         << "kin_qddot_cmd_angular_y,final_qddot_angular_y,"
         << "contact_FR,contact_FL,contact_HR,contact_HL,"
         << "contact_phase_FR,contact_phase_FL,contact_phase_HR,contact_phase_HL,"
@@ -165,7 +167,7 @@ void GaitCtrller::OpenDiagnosticCsvIfNeeded()
         << "f_opt_FL_x,f_opt_FL_y,f_opt_FL_z,"
         << "f_opt_HR_x,f_opt_HR_y,f_opt_HR_z,"
         << "f_opt_HL_x,f_opt_HL_y,f_opt_HL_z,"
-        << "Fz_front,Fz_rear,Fz_total,"
+        << "Fz_front,Fz_rear,Fz_total,Fz_f_opt,"
         << "delta_qddot_u_0,delta_qddot_u_1,delta_qddot_u_2,"
         << "delta_qddot_u_3,delta_qddot_u_4,delta_qddot_u_5,"
         << "norm_delta_qddot_u,kin_contact_residual,final_contact_acc_residual,"
@@ -173,12 +175,15 @@ void GaitCtrller::OpenDiagnosticCsvIfNeeded()
         << "wbic_status,command_source,blend_progress,fallback_count,nWSR,"
         << "tau_ff_0,tau_ff_1,tau_ff_2,tau_ff_3,tau_ff_4,tau_ff_5,"
         << "tau_ff_6,tau_ff_7,tau_ff_8,tau_ff_9,tau_ff_10,tau_ff_11,"
-        << "My,My_MPC,My_WBIC,r_FR_x,r_FR_y,r_FR_z,r_FL_x,r_FL_y,r_FL_z,"
+        << "My,My_MPC,My_WBIC,My_f_opt,r_FR_x,r_FR_y,r_FR_z,r_FL_x,r_FL_y,r_FL_z,"
         << "r_HR_x,r_HR_y,r_HR_z,r_HL_x,r_HL_y,r_HL_z,"
         << "controller_mode,mass_used,com_x,com_y,com_z,payload_mass_used,payload_com_offset_x,"
         << "Fdes_x,Fdes_y,Fdes_z,Mdes_x,Mdes_y,Mdes_z,My_des,My_grf,GRF_QP_status,GRF_QP_cost,GRF_QP_solve_time_us,"
-        << "Fz_gravity,Fz_pos_P,Fz_vel_D,Fz_des_total,My_P,My_D,My_ff,df_norm,df_norm_FR,df_norm_FL,df_norm_HR,df_norm_HL,"
-        << "Fz_FR,Fz_FL,Fz_HR,Fz_HL";
+        << "Fz_gravity,Fz_pos_P,Fz_vel_D,Fz_des_total,Fz_des,My_P,My_D,My_ff,df_norm,df_norm_FR,df_norm_FL,df_norm_HR,df_norm_HL,"
+        << "Fz_FR,Fz_FL,Fz_HR,Fz_HL,"
+        << "z_error,vz_error,z_acc_P,z_acc_D,z_acc_ff,x_ddot_pos_z,"
+        << "omega_y_error,pitch_acc_P,pitch_acc_D,pitch_acc_ff,"
+        << "wbic_start_wall_ns,wbic_done_wall_ns";
     constexpr const char* leg_names[4] = {"FR", "FL", "HR", "HL"};
     constexpr const char* joint_names[2] = {"HipY", "Knee"};
     constexpr const char* joint_fields[9] = {
@@ -202,7 +207,8 @@ void GaitCtrller::LogStandingDiagnostic(const wbic::WbicOutput& wbic_out,
                                         bool wbic_success,
                                         const double* selected_tau_ff,
                                         const wbic::JointHybridCommand* selected_command,
-                                        uint64_t tick_sequence)
+                                        uint64_t tick_sequence,
+                                        uint64_t wbic_start_wall_ns)
 {
     if (!convexMPC || !convexMPC->IsStanding()) return;
     OpenDiagnosticCsvIfNeeded();
@@ -227,6 +233,7 @@ void GaitCtrller::LogStandingDiagnostic(const wbic::WbicOutput& wbic_out,
     double my = 0.0;
     double my_mpc = 0.0;
     double my_wbic = 0.0;
+    double my_f_opt = 0.0;
     for (int leg = 0; leg < 4; ++leg) {
         const auto r = convexMPC->mpc_moment_arms[leg].cast<double>();
         const auto f = selected_force.segment<3>(3 * leg);
@@ -236,6 +243,9 @@ void GaitCtrller::LogStandingDiagnostic(const wbic::WbicOutput& wbic_out,
         if (wbic_attempted) {
             const auto f_wbic = wbic_out.f_opt.segment<3>(3 * leg);
             my_wbic += r[2] * f_wbic[0] - r[0] * f_wbic[2];
+            const Eigen::Vector3d r_com =
+                r + se.position.cast<double>() - last_centroidal_state_.com_world;
+            my_f_opt += r_com[2] * f_wbic[0] - r_com[0] * f_wbic[2];
         }
     }
 
@@ -264,6 +274,8 @@ void GaitCtrller::LogStandingDiagnostic(const wbic::WbicOutput& wbic_out,
                     << ',' << pitch_des << ',' << pitch_actual << ',' << (pitch_des - pitch_actual)
                     << ',' << (wbic_attempted ? wbic_out.orientation_error[1] : unavailable)
                     << ',' << (wbic_attempted ? wbic_out.x_ddot_ori[1] : unavailable)
+                    << ',' << (wbic_attempted ? wbic_out.qddot_cmd[2] : unavailable)
+                    << ',' << (wbic_attempted ? wbic_out.qddot_cmd[4] : unavailable)
                     << ',' << (wbic_attempted ? wbic_out.qddot_cmd[4] : unavailable)
                     << ',' << (wbic_attempted ? wbic_out.qddot[4] : unavailable);
 
@@ -276,7 +288,8 @@ void GaitCtrller::LogStandingDiagnostic(const wbic::WbicOutput& wbic_out,
         diagnostic_csv_ << ',' << (wbic_attempted ? wbic_out.f_opt[i] : unavailable);
     }
 
-    diagnostic_csv_ << ',' << fz_front << ',' << fz_rear << ',' << (fz_front + fz_rear);
+    diagnostic_csv_ << ',' << fz_front << ',' << fz_rear << ',' << (fz_front + fz_rear)
+                    << ',' << (fz_front + fz_rear);
     for (int i = 0; i < 6; ++i) {
         diagnostic_csv_ << ',' << (wbic_attempted ? wbic_out.delta_qddot_u[i] : unavailable);
     }
@@ -292,7 +305,8 @@ void GaitCtrller::LogStandingDiagnostic(const wbic::WbicOutput& wbic_out,
 
     for (int i = 0; i < 12; ++i) diagnostic_csv_ << ',' << selected_tau_ff[i];
     diagnostic_csv_ << ',' << my << ',' << my_mpc
-                    << ',' << (wbic_attempted ? my_wbic : unavailable);
+                    << ',' << (wbic_attempted ? my_wbic : unavailable)
+                    << ',' << (wbic_attempted ? my_f_opt : unavailable);
     for (int leg = 0; leg < 4; ++leg) {
         for (int axis = 0; axis < 3; ++axis) {
             diagnostic_csv_ << ',' << convexMPC->mpc_moment_arms[leg][axis];
@@ -345,6 +359,21 @@ void GaitCtrller::LogStandingDiagnostic(const wbic::WbicOutput& wbic_out,
     const double Fz_HR = last_centroidal_output_.grf_world[2].z();
     const double Fz_HL = last_centroidal_output_.grf_world[3].z();
 
+    const wbic::WbicConfig wbic_config = _wbicController
+        ? _wbicController->GetConfig()
+        : wbic::WbicConfig{};
+    const double z_error = convexMPC->pBody_des.z() - se.position.z();
+    const double vz_error = convexMPC->vBody_des.z() - se.vWorld.z();
+    const double z_acc_P = wbic_config.kp_body_pos * z_error;
+    const double z_acc_D = wbic_config.kd_body_pos * vz_error;
+    const double z_acc_ff = convexMPC->aBody_des.z();
+    const double x_ddot_pos_z = z_acc_ff + z_acc_P + z_acc_D;
+
+    const double omega_y_error = convexMPC->vBody_Ori_des.y() - se.omegaWorld.y();
+    const double pitch_acc_P = wbic_config.kp_body_ori * wbic_out.orientation_error.y();
+    const double pitch_acc_D = wbic_config.kd_body_ori * omega_y_error;
+    const double pitch_acc_ff = 0.0;
+
     diagnostic_csv_
         << ',' << controller_mode << ',' << mass_used
         << ',' << com_x << ',' << com_y << ',' << com_z
@@ -354,9 +383,17 @@ void GaitCtrller::LogStandingDiagnostic(const wbic::WbicOutput& wbic_out,
         << ',' << my_des << ',' << my_grf
         << ',' << grf_qp_status << ',' << grf_qp_cost << ',' << grf_qp_solve_time
         << ',' << Fz_gravity << ',' << Fz_pos_P << ',' << Fz_vel_D << ',' << Fz_des_total
+        << ',' << Fz_des_total
         << ',' << My_P << ',' << My_D << ',' << My_ff
         << ',' << df_norm << ',' << df_norm_FR << ',' << df_norm_FL << ',' << df_norm_HR << ',' << df_norm_HL
-        << ',' << Fz_FR << ',' << Fz_FL << ',' << Fz_HR << ',' << Fz_HL;
+        << ',' << Fz_FR << ',' << Fz_FL << ',' << Fz_HR << ',' << Fz_HL
+        << ',' << z_error << ',' << vz_error
+        << ',' << z_acc_P << ',' << z_acc_D << ',' << z_acc_ff << ',' << x_ddot_pos_z
+        << ',' << omega_y_error
+        << ',' << pitch_acc_P << ',' << pitch_acc_D << ',' << pitch_acc_ff
+        << ',' << wbic_start_wall_ns
+        << ',' << std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch()).count();
     for (int leg = 0; leg < 4; ++leg) {
         for (int joint = 1; joint <= 2; ++joint) {
             const int k = leg * 3 + joint;
@@ -482,6 +519,9 @@ void GaitCtrller::TorqueCalculator(double *imuData,
                                   double *effort,
                                   wbic::JointHybridCommand *hybridCmd)
 {
+    const uint64_t wbic_start_wall_ns = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
     Timer t_total;
     const uint64_t tick_sequence = seq_cnt_++;
 
@@ -761,7 +801,7 @@ void GaitCtrller::TorqueCalculator(double *imuData,
     if (convexMPC->IsStanding())
     {
         LogStandingDiagnostic(wbic_out, wbic_attempted, wbic_success, effort, hybridCmd,
-                              tick_sequence);
+                              tick_sequence, wbic_start_wall_ns);
     }
 
     double t_total_ms = t_total.getMs();
